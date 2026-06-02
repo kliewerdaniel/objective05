@@ -1,3 +1,6 @@
+pub mod kuzu;
+pub mod vectordb;
+
 use std::{
     collections::HashSet,
     fs::File,

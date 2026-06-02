@@ -9,6 +9,7 @@ pub struct ObjectiveConfig {
     pub data_root: PathBuf,
     pub api: ApiConfig,
     pub storage: StorageConfig,
+    pub message_bus: MessageBusConfig,
     pub logging: LoggingConfig,
 }
 
@@ -26,6 +27,14 @@ pub struct StorageConfig {
     pub document_path: PathBuf,
     pub vector_path: PathBuf,
     pub queue_path: PathBuf,
+    pub graph_path: PathBuf,
+    pub embedding_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MessageBusConfig {
+    pub nats_url: String,
+    pub use_embedded: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -42,6 +51,8 @@ impl Default for ObjectiveConfig {
                 document_path: data_root.join("documents"),
                 vector_path: data_root.join("vectors"),
                 queue_path: data_root.join("queue"),
+                graph_path: data_root.join("graph"),
+                embedding_path: data_root.join("embeddings"),
             },
             data_root,
             api: ApiConfig {
@@ -49,6 +60,10 @@ impl Default for ObjectiveConfig {
                 websocket_port: 8081,
                 cors_allowed_origins: vec!["http://localhost:5173".to_string()],
                 auth_enabled: false,
+            },
+            message_bus: MessageBusConfig {
+                nats_url: "nats://127.0.0.1:4222".to_string(),
+                use_embedded: true,
             },
             logging: LoggingConfig {
                 level: "info".to_string(),
@@ -91,5 +106,14 @@ mod tests {
             config.storage.document_path,
             PathBuf::from(".objective/documents")
         );
+        assert_eq!(
+            config.storage.graph_path,
+            PathBuf::from(".objective/graph")
+        );
+        assert_eq!(
+            config.storage.embedding_path,
+            PathBuf::from(".objective/embeddings")
+        );
+        assert_eq!(config.message_bus.nats_url, "nats://127.0.0.1:4222");
     }
 }
