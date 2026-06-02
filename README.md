@@ -202,3 +202,44 @@ All contributions are subject to the project's [Code of Conduct](CODE_OF_CONDUCT
 ---
 
 *Built with determination, not venture capital.*
+# Objective05 Implementation Notes
+
+Objective05 is now scaffolded as a Rust Cargo workspace following the documented local-first architecture.
+
+## Run Locally
+
+```bash
+cargo run -p objective -- setup
+cargo run -p objective -- serve
+```
+
+The API listens on `http://127.0.0.1:8080` by default.
+
+Implemented endpoints:
+
+- `GET /api/v1/health`
+- `GET /api/v1/stats`
+- `GET /api/v1/documents`
+- `GET /api/v1/extractions`
+- `GET /api/v1/events`
+
+## Development Commands
+
+```bash
+make build
+make test
+make fmt
+make clippy
+```
+
+## Current MVP Scope
+
+The first vertical slice includes typed core schemas, configuration loading, tracing setup, gzip-backed document archive storage, in-memory extraction storage, in-memory event publication, document normalization, RSS ingestion, heuristic extraction, and API routes for health, stats, documents, extractions, and events.
+
+The in-memory extraction store and bus are temporary MVP implementations. They preserve the documented interfaces so Kuzu, LanceDB, and NATS can replace them without changing service consumers.
+
+Documents are persisted as compressed JSON files under the configured `storage.document_path`, partitioned by fetch year and month.
+
+## Implemented Source Adapters
+
+- `rss`: parses RSS and Atom feeds, preserves feed metadata, supports URL-backed polling, and has offline XML fixture tests.

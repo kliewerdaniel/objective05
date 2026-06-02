@@ -1,0 +1,21 @@
+[package]
+name = "objective"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+objective-api-gateway = { path = "../api-gateway" }
+objective-core = { path = "../core" }
+objective-extraction = { path = "../extraction" }
+objective-ingestion = { path = "../ingestion" }
+objective-message-bus = { path = "../message-bus" }
+objective-store = { path = "../store" }
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+objective-core = { path = "../core" }

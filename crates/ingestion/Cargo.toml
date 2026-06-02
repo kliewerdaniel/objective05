@@ -1,0 +1,23 @@
+[package]
+name = "objective-ingestion"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+feed-rs = "2.3"
+objective-core = { path = "../core" }
+regex.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+ulid.workspace = true
+
+[dev-dependencies]
+objective-message-bus = { path = "../message-bus" }
+objective-store = { path = "../store" }

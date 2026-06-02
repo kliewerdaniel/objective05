@@ -1,0 +1,14 @@
+data_root: ".objective"
+api:
+  rest_port: 8080
+  websocket_port: 8081
+  cors_allowed_origins:
+    - "http://localhost:5173"
+  auth_enabled: false
+storage:
+  database_path: ".objective/db/database"
+  document_path: ".objective/documents"
+  vector_path: ".objective/vectors"
+  queue_path: ".objective/queue"
+logging:
+  level: "info"
