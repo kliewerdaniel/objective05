@@ -106,10 +106,7 @@ mod tests {
             config.storage.document_path,
             PathBuf::from(".objective/documents")
         );
-        assert_eq!(
-            config.storage.graph_path,
-            PathBuf::from(".objective/graph")
-        );
+        assert_eq!(config.storage.graph_path, PathBuf::from(".objective/graph"));
         assert_eq!(
             config.storage.embedding_path,
             PathBuf::from(".objective/embeddings")

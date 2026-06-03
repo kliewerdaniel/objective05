@@ -1,5 +1,5 @@
 [package]
-name = "objective-extraction"
+name = "objective-scheduler"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,12 +7,14 @@ repository.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+chrono.workspace = true
 objective-core = { path = "../core" }
-regex.workspace = true
+objective-message-bus = { path = "../message-bus" }
+serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+tracing.workspace = true
+utoipa.workspace = true
 
 [dev-dependencies]
-chrono.workspace = true
-ulid.workspace = true
 tempfile.workspace = true

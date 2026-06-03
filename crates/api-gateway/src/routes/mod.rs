@@ -1,5 +1,14 @@
+pub mod broadcasts;
+pub mod claims;
+pub mod contradictions;
+pub mod derived_events;
+pub mod docs;
 pub mod documents;
+pub mod entities;
 pub mod events;
 pub mod extractions;
 pub mod health;
+pub mod monitoring;
+pub mod narratives;
+pub mod sources;
 pub mod stats;

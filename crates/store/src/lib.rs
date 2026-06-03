@@ -1,4 +1,7 @@
 pub mod kuzu;
+pub mod monitoring;
+pub mod retry_queue;
+pub mod snapshot;
 pub mod vectordb;
 
 use std::{

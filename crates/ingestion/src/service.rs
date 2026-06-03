@@ -26,10 +26,7 @@ where
         Self { repository, bus }
     }
 
-    pub async fn poll_source<A>(&self, adapter: &A) -> Result<usize>
-    where
-        A: SourceAdapter,
-    {
+    pub async fn poll_source<A: SourceAdapter + ?Sized>(&self, adapter: &A) -> Result<usize> {
         adapter.validate()?;
         let result = adapter.poll(None).await?;
         let count = result.documents.len();

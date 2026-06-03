@@ -16,7 +16,8 @@ pub trait GraphRepository: Send + Sync {
     async fn list_claims(&self) -> Result<Vec<ExtractedClaim>>;
 
     async fn save_relationship(&self, relationship: ExtractedRelationship) -> Result<()>;
-    async fn get_relationship(&self, from: &str, to: &str) -> Result<Option<ExtractedRelationship>>;
+    async fn get_relationship(&self, from: &str, to: &str)
+        -> Result<Option<ExtractedRelationship>>;
     async fn list_relationships(&self) -> Result<Vec<ExtractedRelationship>>;
 
     async fn find_related_entities(&self, entity_name: &str) -> Result<Vec<ExtractedEntity>>;

@@ -1,5 +1,23 @@
+pub mod arxiv;
+pub mod github;
+pub mod github_releases;
+pub mod hacker_news;
+pub mod podcast;
+pub mod reddit;
 pub mod rss;
+pub mod sec_edgar;
 pub mod static_source;
+pub mod web;
+pub mod youtube;
 
+pub use arxiv::ArxivSourceAdapter;
+pub use github::GitHubSourceAdapter;
+pub use github_releases::GitHubReleasesAdapter;
+pub use hacker_news::HackerNewsSourceAdapter;
+pub use podcast::PodcastSourceAdapter;
+pub use reddit::RedditSourceAdapter;
 pub use rss::RssSourceAdapter;
+pub use sec_edgar::SecEdgarAdapter;
 pub use static_source::StaticSourceAdapter;
+pub use web::WebSourceAdapter;
+pub use youtube::YouTubeSourceAdapter;

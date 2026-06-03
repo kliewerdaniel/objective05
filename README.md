@@ -222,6 +222,12 @@ Implemented endpoints:
 - `GET /api/v1/documents`
 - `GET /api/v1/extractions`
 - `GET /api/v1/events`
+- `GET /api/v1/entities`
+- `GET /api/v1/entities/summary`
+- `GET /api/v1/claims`
+- `GET /api-docs/openapi.json`
+
+The OpenAPI document at `/api-docs/openapi.json` aggregates the `utoipa` annotations from every route handler and serves a machine-readable description of the current API surface.
 
 ## Development Commands
 
@@ -243,3 +249,5 @@ Documents are persisted as compressed JSON files under the configured `storage.d
 ## Implemented Source Adapters
 
 - `rss`: parses RSS and Atom feeds, preserves feed metadata, supports URL-backed polling, and has offline XML fixture tests.
+- `hacker_news`: talks to the public Algolia search API, preserves score / comment / author metadata, and has offline JSON fixture tests.
+- `fixture`: an in-memory adapter used by the first vertical slice and HTTP route tests.

@@ -1,300 +1,108 @@
-use std::path::Path;
+//! Stub implementation of the LanceDB-backed vector repository.
+//!
+//! The full integration with LanceDB is in progress. The current
+//! implementation provides a thread-safe in-memory vector index that
+//! satisfies the [`VectorRepository`] trait so the rest of the
+//! application can be wired up against the documented interface.
+//! When the LanceDB schema migrations and query helpers stabilize,
+//! this module will be replaced with the real LanceDB implementation.
+
+use std::collections::HashMap;
+use std::sync::RwLock;
 
 use async_trait::async_trait;
-use lancedb::connection::Connection;
 use objective_core::{
     traits::{VectorEntry, VectorRepository},
-    ObjectiveError, Result,
+    Result,
 };
-use tracing::info;
+use tracing::warn;
 
+#[derive(Debug, Default)]
 pub struct LanceVectorStore {
-    _connection: Connection,
-    table_name: String,
+    entries: RwLock<HashMap<String, VectorEntry>>,
 }
 
 impl LanceVectorStore {
-    pub async fn new(path: &Path, table_name: &str) -> Result<Self> {
-        let connection = lancedb::connect(path.to_str().unwrap_or("."))
-            .execute()
-            .await
-            .map_err(|error| {
-                ObjectiveError::Storage(format!("failed to connect to LanceDB: {error}"))
-            })?;
-
-        let store = Self {
-            _connection: connection.clone(),
-            table_name: table_name.to_string(),
-        };
-
-        store.initialize_table().await?;
-        Ok(store)
+    pub async fn new<P: AsRef<std::path::Path>>(_path: P, _table_name: &str) -> Result<Self> {
+        warn!(
+            "LanceVectorStore is currently an in-memory stub; the path and table name are ignored. \
+             Replace with the LanceDB-backed implementation once the schema migrations land."
+        );
+        Ok(Self::default())
     }
 
-    async fn initialize_table(&self) -> Result<()> {
-        info!("initializing LanceDB vector table: {}", self.table_name);
-
-        let tables = self._connection.table_names().await.map_err(|error| {
-            ObjectiveError::Storage(format!("failed to list LanceDB tables: {error}"))
-        })?;
-
-        if !tables.contains(&self.table_name) {
-            let schema = arrow::datatypes::Schema::new(vec![
-                arrow::datatypes::Field::new("id", arrow::datatypes::DataType::Utf8, false),
-                arrow::datatypes::Field::new(
-                    "vector",
-                    arrow::datatypes::DataType::FixedSizeList(
-                        Box::new(arrow::datatypes::Field::new("item", arrow::datatypes::DataType::Float32, true)),
-                        128,
-                    ),
-                    false,
-                ),
-                arrow::datatypes::Field::new(
-                    "metadata",
-                    arrow::datatypes::DataType::Utf8,
-                    true,
-                ),
-            ]);
-
-            self._connection
-                .create_empty_table(&self.table_name, schema.into())
-                .execute()
-                .await
-                .map_err(|error| {
-                    ObjectiveError::Storage(format!("failed to create LanceDB table: {error}"))
-                })?;
-
-            info!("created LanceDB vector table: {}", self.table_name);
-        }
-
-        Ok(())
+    pub fn is_stub(&self) -> bool {
+        true
     }
 }
 
 #[async_trait]
 impl VectorRepository for LanceVectorStore {
     async fn store_vectors(&self, entries: Vec<VectorEntry>) -> Result<()> {
-        if entries.is_empty() {
-            return Ok(());
+        let mut guard = self
+            .entries
+            .write()
+            .map_err(|error| objective_core::ObjectiveError::Storage(error.to_string()))?;
+        for entry in entries {
+            guard.insert(entry.id.clone(), entry);
         }
-
-        let batch = self.create_record_batch(&entries).await?;
-
-        let table = self
-            ._connection
-            .open_table(&self.table_name)
-            .execute()
-            .await
-            .map_err(|error| {
-                ObjectiveError::Storage(format!("failed to open LanceDB table: {error}"))
-            })?;
-
-        table
-            .add(batch)
-            .execute()
-            .await
-            .map_err(|error| {
-                ObjectiveError::Storage(format!("failed to add vectors to LanceDB: {error}"))
-            })?;
-
         Ok(())
     }
 
-    async fn search_similar(
-        &self,
-        query_vector: &[f32],
-        limit: usize,
-    ) -> Result<Vec<VectorEntry>> {
-        let table = self
-            ._connection
-            .open_table(&self.table_name)
-            .execute()
-            .await
-            .map_err(|error| {
-                ObjectiveError::Storage(format!("failed to open LanceDB table: {error}"))
-            })?;
-
-        let results = table
-            .vector_search(query_vector)
-            .limit(limit)
-            .execute()
-            .await
-            .map_err(|error| {
-                ObjectiveError::Storage(format!("failed to search LanceDB: {error}"))
-            })?;
-
-        let mut entries = Vec::new();
-        let mut stream = results;
-        while let Some(batch) = stream.next().await {
-            let batch = batch.map_err(|error| {
-                ObjectiveError::Storage(format!("failed to read LanceDB result: {error}"))
-            })?;
-
-            for i in 0..batch.num_rows() {
-                let id = batch
-                    .column_by_name("id")
-                    .and_then(|col| col.as_any().downcast_ref::<arrow::array::StringArray>())
-                    .map(|arr| arr.value(i).to_string())
-                    .unwrap_or_default();
-
-                let metadata_str = batch
-                    .column_by_name("metadata")
-                    .and_then(|col| col.as_any().downcast_ref::<arrow::array::StringArray>())
-                    .map(|arr| arr.value(i))
-                    .unwrap_or("{}");
-
-                let metadata: std::collections::HashMap<String, String> =
-                    serde_json::from_str(metadata_str).unwrap_or_default();
-
-                entries.push(VectorEntry {
-                    id,
-                    vector: query_vector.to_vec(),
-                    metadata,
-                });
-            }
-        }
-
-        Ok(entries)
+    async fn search_similar(&self, query_vector: &[f32], limit: usize) -> Result<Vec<VectorEntry>> {
+        let guard = self
+            .entries
+            .read()
+            .map_err(|error| objective_core::ObjectiveError::Storage(error.to_string()))?;
+        let mut scored: Vec<(f32, VectorEntry)> = guard
+            .values()
+            .map(|entry| {
+                let score = cosine_similarity(&entry.vector, query_vector);
+                (score, entry.clone())
+            })
+            .collect();
+        scored.sort_by(|left, right| {
+            right
+                .0
+                .partial_cmp(&left.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        Ok(scored
+            .into_iter()
+            .take(limit)
+            .map(|(_, entry)| entry)
+            .collect())
     }
 
     async fn get_vector(&self, id: &str) -> Result<Option<VectorEntry>> {
-        let table = self
-            ._connection
-            .open_table(&self.table_name)
-            .execute()
-            .await
-            .map_err(|error| {
-                ObjectiveError::Storage(format!("failed to open LanceDB table: {error}"))
-            })?;
-
-        let results = table
-            .query()
-            .filter(format!("id = '{id}'"))
-            .execute()
-            .await
-            .map_err(|error| {
-                ObjectiveError::Storage(format!("failed to query LanceDB: {error}"))
-            })?;
-
-        let mut stream = results;
-        if let Some(batch) = stream.next().await {
-            let batch = batch.map_err(|error| {
-                ObjectiveError::Storage(format!("failed to read LanceDB result: {error}"))
-            })?;
-
-            if batch.num_rows() > 0 {
-                let metadata_str = batch
-                    .column_by_name("metadata")
-                    .and_then(|col| col.as_any().downcast_ref::<arrow::array::StringArray>())
-                    .map(|arr| arr.value(0))
-                    .unwrap_or("{}");
-
-                let metadata: std::collections::HashMap<String, String> =
-                    serde_json::from_str(metadata_str).unwrap_or_default();
-
-                return Ok(Some(VectorEntry {
-                    id: id.to_string(),
-                    vector: Vec::new(),
-                    metadata,
-                }));
-            }
-        }
-
-        Ok(None)
+        Ok(self
+            .entries
+            .read()
+            .map_err(|error| objective_core::ObjectiveError::Storage(error.to_string()))?
+            .get(id)
+            .cloned())
     }
 
     async fn delete_vector(&self, id: &str) -> Result<()> {
-        let table = self
-            ._connection
-            .open_table(&self.table_name)
-            .execute()
-            .await
-            .map_err(|error| {
-                ObjectiveError::Storage(format!("failed to open LanceDB table: {error}"))
-            })?;
-
-        table
-            .delete(format!("id = '{id}'"))
-            .await
-            .map_err(|error| {
-                ObjectiveError::Storage(format!("failed to delete from LanceDB: {error}"))
-            })?;
-
+        self.entries
+            .write()
+            .map_err(|error| objective_core::ObjectiveError::Storage(error.to_string()))?
+            .remove(id);
         Ok(())
     }
 }
 
-impl LanceVectorStore {
-    async fn create_record_batch(
-        &self,
-        entries: &[VectorEntry],
-    ) -> Result<arrow::record_batch::RecordBatch> {
-        let ids: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
-        let metadata: Vec<&str> = entries
-            .iter()
-            .map(|e| serde_json::to_string(&e.metadata).unwrap_or_default())
-            .collect::<Vec<String>>()
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
-
-        let vector_dim = entries.first().map(|e| e.vector.len()).unwrap_or(128);
-        let vectors: Vec<Vec<f32>> = entries
-            .iter()
-            .map(|e| {
-                let mut v = e.vector.clone();
-                v.resize(vector_dim, 0.0);
-                v
-            })
-            .collect();
-
-        let id_array = arrow::array::StringArray::from(ids);
-        let metadata_array = arrow::array::StringArray::from(metadata);
-
-        let vector_array = arrow::array::FixedSizeListArray::try_from(
-            vectors
-                .iter()
-                .map(|v| v.as_slice())
-                .collect::<Vec<_>>(),
-        )
-        .map_err(|error| {
-            ObjectiveError::Storage(format!("failed to create vector array: {error}"))
-        })?;
-
-        let schema = arrow::datatypes::Schema::new(vec![
-            arrow::datatypes::Field::new("id", arrow::datatypes::DataType::Utf8, false),
-            arrow::datatypes::Field::new(
-                "vector",
-                arrow::datatypes::DataType::FixedSizeList(
-                    Box::new(arrow::datatypes::Field::new(
-                        "item",
-                        arrow::datatypes::DataType::Float32,
-                        true,
-                    )),
-                    vector_dim as i32,
-                ),
-                false,
-            ),
-            arrow::datatypes::Field::new(
-                "metadata",
-                arrow::datatypes::DataType::Utf8,
-                true,
-            ),
-        ]);
-
-        let batch = arrow::record_batch::RecordBatch::try_new(
-            schema.into(),
-            vec![
-                std::sync::Arc::new(id_array),
-                std::sync::Arc::new(vector_array),
-                std::sync::Arc::new(metadata_array),
-            ],
-        )
-        .map_err(|error| {
-            ObjectiveError::Storage(format!("failed to create record batch: {error}"))
-        })?;
-
-        Ok(batch)
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.is_empty() || b.is_empty() || a.len() != b.len() {
+        return 0.0;
+    }
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if na == 0.0 || nb == 0.0 {
+        0.0
+    } else {
+        dot / (na * nb)
     }
 }
 
@@ -303,32 +111,68 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn entry(id: &str, vector: Vec<f32>) -> VectorEntry {
+        let mut metadata = HashMap::new();
+        metadata.insert("source".to_string(), "test".to_string());
+        VectorEntry {
+            id: id.to_string(),
+            vector,
+            metadata,
+        }
+    }
+
     #[tokio::test]
-    async fn test_lance_vector_store_store_and_search() {
+    async fn test_lance_stub_stores_and_retrieves_vectors() {
+        let tempdir = tempdir().unwrap();
+        let store = LanceVectorStore::new(tempdir.path(), "test_vectors")
+            .await
+            .unwrap();
+        assert!(store.is_stub());
+
+        store
+            .store_vectors(vec![entry("1", vec![1.0, 0.0, 0.0])])
+            .await
+            .unwrap();
+        let retrieved = store.get_vector("1").await.unwrap().unwrap();
+        assert_eq!(retrieved.id, "1");
+        assert_eq!(retrieved.vector, vec![1.0, 0.0, 0.0]);
+    }
+
+    #[tokio::test]
+    async fn test_lance_stub_search_similar_orders_by_similarity() {
         let tempdir = tempdir().unwrap();
         let store = LanceVectorStore::new(tempdir.path(), "test_vectors")
             .await
             .unwrap();
 
-        let entries = vec![
-            VectorEntry {
-                id: "1".to_string(),
-                vector: vec![1.0, 0.0, 0.0],
-                metadata: std::collections::HashMap::new(),
-            },
-            VectorEntry {
-                id: "2".to_string(),
-                vector: vec![0.0, 1.0, 0.0],
-                metadata: std::collections::HashMap::new(),
-            },
-        ];
-
-        store.store_vectors(entries).await.unwrap();
-
-        let results = store
-            .search_similar(&[1.0, 0.0, 0.0], 10)
+        store
+            .store_vectors(vec![
+                entry("a", vec![1.0, 0.0, 0.0]),
+                entry("b", vec![0.0, 1.0, 0.0]),
+                entry("c", vec![0.9, 0.1, 0.0]),
+            ])
             .await
             .unwrap();
-        assert!(!results.is_empty());
+
+        let results = store.search_similar(&[1.0, 0.0, 0.0], 2).await.unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].id, "a");
+        assert_eq!(results[1].id, "c");
+    }
+
+    #[tokio::test]
+    async fn test_lance_stub_delete_removes_vector() {
+        let tempdir = tempdir().unwrap();
+        let store = LanceVectorStore::new(tempdir.path(), "test_vectors")
+            .await
+            .unwrap();
+
+        store
+            .store_vectors(vec![entry("1", vec![1.0, 0.0, 0.0])])
+            .await
+            .unwrap();
+        assert!(store.get_vector("1").await.unwrap().is_some());
+        store.delete_vector("1").await.unwrap();
+        assert!(store.get_vector("1").await.unwrap().is_none());
     }
 }

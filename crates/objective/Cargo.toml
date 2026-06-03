@@ -8,14 +8,21 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+chrono.workspace = true
 objective-api-gateway = { path = "../api-gateway" }
 objective-core = { path = "../core" }
+objective-correlation = { path = "../correlation" }
 objective-extraction = { path = "../extraction" }
 objective-ingestion = { path = "../ingestion" }
 objective-message-bus = { path = "../message-bus" }
+objective-scheduler = { path = "../scheduler" }
 objective-store = { path = "../store" }
+serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
 objective-core = { path = "../core" }
+serde_json.workspace = true
+tempfile.workspace = true
+ulid.workspace = true

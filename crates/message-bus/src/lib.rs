@@ -33,7 +33,9 @@ pub struct NatsMessageBus {
 impl NatsMessageBus {
     pub async fn connect(url: &str) -> Result<Self> {
         let client = async_nats::connect(url).await.map_err(|error| {
-            objective_core::ObjectiveError::MessageBus(format!("failed to connect to NATS: {error}"))
+            objective_core::ObjectiveError::MessageBus(format!(
+                "failed to connect to NATS: {error}"
+            ))
         })?;
 
         Ok(Self {
@@ -51,14 +53,18 @@ impl NatsMessageBus {
 impl MessageBus for NatsMessageBus {
     async fn publish(&self, subject: &str, event: EventEnvelope) -> Result<()> {
         let payload = serde_json::to_vec(&event).map_err(|error| {
-            objective_core::ObjectiveError::MessageBus(format!("failed to serialize event: {error}"))
+            objective_core::ObjectiveError::MessageBus(format!(
+                "failed to serialize event: {error}"
+            ))
         })?;
 
         self.client
             .publish(subject.to_string(), payload.into())
             .await
             .map_err(|error| {
-                objective_core::ObjectiveError::MessageBus(format!("failed to publish event: {error}"))
+                objective_core::ObjectiveError::MessageBus(format!(
+                    "failed to publish event: {error}"
+                ))
             })?;
 
         self.stored_events
