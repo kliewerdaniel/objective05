@@ -30,11 +30,7 @@ pub struct GitHubReleasesAdapter {
 
 impl GitHubReleasesAdapter {
     /// Create a new adapter for a GitHub repository's releases.
-    pub fn new(
-        name: impl Into<String>,
-        owner: impl Into<String>,
-        repo: impl Into<String>,
-    ) -> Self {
+    pub fn new(name: impl Into<String>, owner: impl Into<String>, repo: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             owner: owner.into(),
@@ -199,7 +195,10 @@ fn build_body(release: &Release) -> String {
     if parts.is_empty() {
         return format!(
             "GitHub release {}",
-            release.id.map(|id| id.to_string()).unwrap_or_else(|| "unknown".to_string())
+            release
+                .id
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "unknown".to_string())
         );
     }
     parts.join(" ")
@@ -268,10 +267,7 @@ impl SourceAdapter for GitHubReleasesAdapter {
             let mut metadata: HashMap<String, serde_json::Value> = HashMap::new();
             metadata.insert("owner".to_string(), json!(self.owner));
             metadata.insert("repo".to_string(), json!(self.repo));
-            metadata.insert(
-                "tag_name".to_string(),
-                json!(release.tag_name),
-            );
+            metadata.insert("tag_name".to_string(), json!(release.tag_name));
             metadata.insert(
                 "author".to_string(),
                 json!(release.author.as_ref().and_then(|a| a.login.as_deref())),
@@ -434,8 +430,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_poll_parses_releases_into_documents() {
-        let adapter =
-            GitHubReleasesAdapter::from_json("releases_fixture", "octocat", "hello-world", RELEASES_FIXTURE);
+        let adapter = GitHubReleasesAdapter::from_json(
+            "releases_fixture",
+            "octocat",
+            "hello-world",
+            RELEASES_FIXTURE,
+        );
 
         let result = adapter.poll(None).await.unwrap();
         assert_eq!(result.documents.len(), 2);
@@ -456,8 +456,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_poll_honors_rfc3339_cursor() {
-        let adapter =
-            GitHubReleasesAdapter::from_json("releases_fixture", "octocat", "hello-world", RELEASES_FIXTURE);
+        let adapter = GitHubReleasesAdapter::from_json(
+            "releases_fixture",
+            "octocat",
+            "hello-world",
+            RELEASES_FIXTURE,
+        );
 
         let result = adapter
             .poll(Some("2026-06-01T12:00:00Z".to_string()))
@@ -469,8 +473,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_one_returns_matching_document() {
-        let adapter =
-            GitHubReleasesAdapter::from_json("releases_fixture", "octocat", "hello-world", RELEASES_FIXTURE);
+        let adapter = GitHubReleasesAdapter::from_json(
+            "releases_fixture",
+            "octocat",
+            "hello-world",
+            RELEASES_FIXTURE,
+        );
 
         let document = adapter.fetch_one("v1.1.0").await.unwrap();
         assert_eq!(document.external_id, "v1.1.0");
@@ -479,8 +487,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_health_reports_healthy_for_fixture() {
-        let adapter =
-            GitHubReleasesAdapter::from_json("releases_fixture", "octocat", "hello-world", RELEASES_FIXTURE);
+        let adapter = GitHubReleasesAdapter::from_json(
+            "releases_fixture",
+            "octocat",
+            "hello-world",
+            RELEASES_FIXTURE,
+        );
         let health = adapter.health().await.unwrap();
         assert_eq!(health.status, "healthy");
     }

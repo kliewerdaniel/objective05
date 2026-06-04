@@ -105,16 +105,12 @@ impl WebSourceAdapter {
         let html = tags.replace_all(&html, " ");
         let tags = Regex::new(r"(?i)<[^>]+>").expect("valid html tag regex");
         let text = tags.replace_all(&html, " ");
-        text.split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
+        text.split_whitespace().collect::<Vec<_>>().join(" ")
     }
 
     fn extract_meta_description(html: &str) -> Option<String> {
-        let re = Regex::new(
-            r#"(?i)<meta\s+name=["']description["']\s+content=["']([^"']+)["']"#,
-        )
-        .ok()?;
+        let re = Regex::new(r#"(?i)<meta\s+name=["']description["']\s+content=["']([^"']+)["']"#)
+            .ok()?;
         let caps = re.captures(html)?;
         Some(caps.get(1)?.as_str().trim().to_string())
     }
@@ -241,9 +237,7 @@ impl SourceAdapter for WebSourceAdapter {
                     "degraded"
                 }
             })
-            .map_err(|error| {
-                ObjectiveError::Source(format!("web health check failed: {error}"))
-            })?;
+            .map_err(|error| ObjectiveError::Source(format!("web health check failed: {error}")))?;
 
         Ok(HealthStatus {
             source_id: self.name.clone(),
@@ -292,7 +286,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_poll_extracts_text_from_html() {
-        let adapter = WebSourceAdapter::from_html("web_fixture", "https://example.com/news", HTML_FIXTURE);
+        let adapter =
+            WebSourceAdapter::from_html("web_fixture", "https://example.com/news", HTML_FIXTURE);
 
         let result = adapter.poll(None).await.unwrap();
         assert_eq!(result.documents.len(), 1);
@@ -300,10 +295,7 @@ mod tests {
         let document = &result.documents[0];
         assert_eq!(document.source_type, "web");
         assert_eq!(document.external_id, "https://example.com/news");
-        assert_eq!(
-            document.url.as_deref(),
-            Some("https://example.com/news")
-        );
+        assert_eq!(document.url.as_deref(), Some("https://example.com/news"));
         assert_eq!(
             document.title.as_deref(),
             Some("Example News Article - Breaking Technology News")
@@ -316,34 +308,40 @@ mod tests {
 
     #[tokio::test]
     async fn test_poll_extracts_metadata() {
-        let adapter = WebSourceAdapter::from_html("web_fixture", "https://example.com/news", HTML_FIXTURE);
+        let adapter =
+            WebSourceAdapter::from_html("web_fixture", "https://example.com/news", HTML_FIXTURE);
 
         let result = adapter.poll(None).await.unwrap();
         let document = &result.documents[0];
         assert_eq!(
-            document.metadata.get("meta_author").and_then(|v| v.as_str()),
+            document
+                .metadata
+                .get("meta_author")
+                .and_then(|v| v.as_str()),
             Some("Jane Smith")
         );
         assert_eq!(
-            document.metadata.get("meta_description").and_then(|v| v.as_str()),
+            document
+                .metadata
+                .get("meta_description")
+                .and_then(|v| v.as_str()),
             Some("Latest technology news and analysis from around the world.")
         );
     }
 
     #[tokio::test]
     async fn test_fetch_one_returns_document() {
-        let adapter = WebSourceAdapter::from_html("web_fixture", "https://example.com/news", HTML_FIXTURE);
+        let adapter =
+            WebSourceAdapter::from_html("web_fixture", "https://example.com/news", HTML_FIXTURE);
 
-        let document = adapter
-            .fetch_one("https://example.com/news")
-            .await
-            .unwrap();
+        let document = adapter.fetch_one("https://example.com/news").await.unwrap();
         assert!(document.body.contains("AI Models"));
     }
 
     #[tokio::test]
     async fn test_health_reports_healthy_for_fixture() {
-        let adapter = WebSourceAdapter::from_html("web_fixture", "https://example.com/news", HTML_FIXTURE);
+        let adapter =
+            WebSourceAdapter::from_html("web_fixture", "https://example.com/news", HTML_FIXTURE);
         let health = adapter.health().await.unwrap();
         assert_eq!(health.status, "healthy");
     }

@@ -15,6 +15,9 @@ serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 ulid.workspace = true
+utoipa.workspace = true
 
 [dev-dependencies]
+objective-message-bus = { path = "../message-bus" }
 tempfile.workspace = true
+

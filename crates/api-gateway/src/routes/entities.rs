@@ -6,7 +6,7 @@ use axum::{
     Json,
 };
 use objective_core::types::{EntityType, ExtractedClaim, ExtractedEntity};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::server::ApiState;
@@ -181,4 +181,135 @@ struct EntityAggregate {
     confidence_count: usize,
     document_count: usize,
     evidence_snippet: String,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct EntityMergeRequest {
+    /// Source entity name to merge from. Will be removed.
+    pub source: String,
+    /// Target entity name to merge into. Will be preserved.
+    pub target: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct EntityMergeResponse {
+    pub source: String,
+    pub target: String,
+    pub entities_merged: usize,
+    pub claims_rewritten: usize,
+    pub relationships_rewritten: usize,
+    pub message: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/entities/merge",
+    request_body = EntityMergeRequest,
+    responses(
+        (status = 200, description = "Source entity merged into target", body = EntityMergeResponse),
+        (status = 400, description = "Invalid merge request", body = EntityError),
+        (status = 404, description = "Source entity not found", body = EntityError)
+    )
+)]
+pub async fn merge_entities(
+    State(state): State<ApiState>,
+    Json(request): Json<EntityMergeRequest>,
+) -> Result<Json<EntityMergeResponse>, (StatusCode, Json<EntityError>)> {
+    let source = request.source.trim().to_string();
+    let target = request.target.trim().to_string();
+
+    if source.is_empty() || target.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(EntityError {
+                error: "source and target are required".to_string(),
+            }),
+        ));
+    }
+    if source == target {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(EntityError {
+                error: "source and target must be different".to_string(),
+            }),
+        ));
+    }
+
+    let extractions = state.store.list_extractions().await.unwrap_or_default();
+
+    let mut source_present = false;
+    for extraction in &extractions {
+        for entity in &extraction.entities {
+            if entity.name == source {
+                source_present = true;
+                break;
+            }
+        }
+        if source_present {
+            break;
+        }
+    }
+    if !source_present {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(EntityError {
+                error: format!("source entity not found: {source}"),
+            }),
+        ));
+    }
+
+    let mut entities_merged = 0usize;
+    let mut claims_rewritten = 0usize;
+    let mut relationships_rewritten = 0usize;
+    let mut updated_extractions = Vec::with_capacity(extractions.len());
+
+    for mut extraction in extractions {
+        extraction.entities.retain(|entity| {
+            if entity.name == source {
+                entities_merged += 1;
+                false
+            } else {
+                true
+            }
+        });
+        for claim in extraction.claims.iter_mut() {
+            if claim.subject_name == source {
+                claim.subject_name = target.clone();
+                claims_rewritten += 1;
+            }
+            if claim.object_name.as_deref() == Some(source.as_str()) {
+                claim.object_name = Some(target.clone());
+                claims_rewritten += 1;
+            }
+        }
+        for relationship in extraction.relationships.iter_mut() {
+            if relationship.from_entity_name == source {
+                relationship.from_entity_name = target.clone();
+                relationships_rewritten += 1;
+            }
+            if relationship.to_entity_name == source {
+                relationship.to_entity_name = target.clone();
+                relationships_rewritten += 1;
+            }
+        }
+        updated_extractions.push(extraction);
+    }
+
+    if let Err(error) = state.store.replace_extractions(updated_extractions).await {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(EntityError {
+                error: format!("failed to persist merge: {error}"),
+            }),
+        ));
+    }
+
+    Ok(Json(EntityMergeResponse {
+        source,
+        target,
+        entities_merged,
+        claims_rewritten,
+        relationships_rewritten,
+        message: "merge complete".to_string(),
+    }))
 }

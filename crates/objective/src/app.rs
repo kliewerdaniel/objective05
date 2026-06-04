@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, sync::Arc};
 
-use objective_api_gateway::{build_router, ApiState};
+use objective_api_gateway::{build_router, ApiState, WebSocketHub};
 use objective_core::{
     traits::{DocumentProcessor, DocumentRepository, ExtractionRepository, GraphRepository},
     ObjectiveConfig,
@@ -9,11 +9,19 @@ use objective_correlation::{store::FileEventRepository, EventEngine};
 use objective_extraction::HeuristicExtractionService;
 use objective_ingestion::{
     adapters::{RssSourceAdapter, StaticSourceAdapter},
-    IngestionService,
+    IngestionService, SourceDefinition, SourceRegistry, SourceType,
 };
 use objective_message_bus::InMemoryMessageBus;
 use objective_scheduler::{SchedulerConfig, SchedulerService};
-use objective_store::{kuzu::KuzuGraphStore, monitoring::MonitoringService, retry_queue::RetryQueue, snapshot::SnapshotService, vectordb::LanceVectorStore, RuntimeStore};
+use objective_store::{
+    kuzu::KuzuGraphStore,
+    monitoring::MonitoringService,
+    recovery::{RecoveryConfig, RecoveryService},
+    retry_queue::RetryQueue,
+    snapshot::SnapshotService,
+    vectordb::LanceVectorStore,
+    RuntimeStore,
+};
 use tracing::{info, warn};
 
 use crate::pipeline::{first_claim_from, PipelineWorker};
@@ -28,6 +36,9 @@ pub struct AppState {
     pub event_engine: Arc<EventEngine<FileEventRepository>>,
     pub scheduler: Arc<SchedulerService>,
     pub monitoring: Arc<MonitoringService>,
+    pub recovery: Arc<RecoveryService>,
+    pub websocket_hub: WebSocketHub,
+    pub source_registry: Arc<SourceRegistry>,
 }
 
 impl AppState {
@@ -63,6 +74,51 @@ impl AppState {
 
         let monitoring = Arc::new(MonitoringService::new(&config.data_root));
 
+        let recovery = Arc::new(RecoveryService::new(
+            RecoveryConfig {
+                state_path: Some(state_dir.join("recovery.json")),
+                ..Default::default()
+            },
+            Arc::clone(&monitoring),
+            Arc::clone(&bus) as Arc<_>,
+        ));
+
+        let websocket_hub = WebSocketHub::spawn(Arc::clone(&bus));
+
+        let source_registry = Arc::new(SourceRegistry::load(&state_dir));
+        if let Err(err) = source_registry
+            .add(SourceDefinition {
+                name: "hackernews_front".to_string(),
+                source_type: SourceType::Rss,
+                url: Some("https://hnrss.org/frontpage".to_string()),
+                schedule: None,
+                enabled: true,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            })
+            .await
+        {
+            if !matches!(err, objective_ingestion::RegistryError::AlreadyExists(_)) {
+                warn!(?err, "failed to seed hackernews_front source");
+            }
+        }
+        if let Err(err) = source_registry
+            .add(SourceDefinition {
+                name: "lobsters".to_string(),
+                source_type: SourceType::Rss,
+                url: Some("https://lobste.rs/rss".to_string()),
+                schedule: None,
+                enabled: true,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            })
+            .await
+        {
+            if !matches!(err, objective_ingestion::RegistryError::AlreadyExists(_)) {
+                warn!(?err, "failed to seed lobsters source");
+            }
+        }
+
         Ok(Self {
             store,
             bus,
@@ -72,6 +128,9 @@ impl AppState {
             event_engine,
             scheduler,
             monitoring,
+            recovery,
+            websocket_hub,
+            source_registry,
         })
     }
 
@@ -134,7 +193,10 @@ pub async fn serve(config: ObjectiveConfig) -> anyhow::Result<()> {
         .with_event_repository(
             Arc::clone(&state.event_repository) as Arc<dyn objective_correlation::EventRepository>
         )
-        .with_monitoring(Arc::clone(&state.monitoring));
+        .with_monitoring(Arc::clone(&state.monitoring))
+        .with_recovery(Arc::clone(&state.recovery))
+        .with_websocket_hub(state.websocket_hub.clone())
+        .with_source_registry(Arc::clone(&state.source_registry));
 
     let app = build_router(api_state);
     let addr = SocketAddr::from(([127, 0, 0, 1], config.api.rest_port));
@@ -154,19 +216,23 @@ pub async fn serve(config: ObjectiveConfig) -> anyhow::Result<()> {
         }
     });
 
+    // Start recovery service in background
+    let recovery = Arc::clone(&state.recovery);
+    tokio::spawn(async move {
+        if let Err(e) = recovery.start().await {
+            tracing::error!("recovery service error: {e}");
+        }
+    });
+
     // Start pipeline worker in background
     let ingestion = IngestionService::new(Arc::clone(&state.store), Arc::clone(&state.bus));
-    let processor: Arc<dyn DocumentProcessor> =
-        Arc::new(HeuristicExtractionService);
+    let processor: Arc<dyn DocumentProcessor> = Arc::new(HeuristicExtractionService);
     let default_sources: Vec<Arc<dyn objective_core::traits::SourceAdapter>> = vec![
         Arc::new(RssSourceAdapter::new(
             "hackernews_front",
             "https://hnrss.org/frontpage",
         )),
-        Arc::new(RssSourceAdapter::new(
-            "lobsters",
-            "https://lobste.rs/rss",
-        )),
+        Arc::new(RssSourceAdapter::new("lobsters", "https://lobste.rs/rss")),
     ];
     let pipeline = PipelineWorker::new(
         ingestion,

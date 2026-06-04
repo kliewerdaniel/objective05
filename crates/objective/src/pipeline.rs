@@ -7,7 +7,9 @@ use objective_core::{
 };
 use objective_correlation::{store::EventRepository, EventEngine};
 use objective_ingestion::IngestionService;
-    use objective_store::{monitoring::MonitoringService, retry_queue::RetryQueue, snapshot::SnapshotService, RuntimeStore};
+use objective_store::{
+    monitoring::MonitoringService, retry_queue::RetryQueue, snapshot::SnapshotService, RuntimeStore,
+};
 use serde_json::json;
 use tokio::time::{interval, Duration};
 use tracing::{error, info, warn};
@@ -53,10 +55,6 @@ impl<B: MessageBus, R: EventRepository> PipelineWorker<B, R> {
         }
     }
 
-    pub fn monitoring(&self) -> &Arc<MonitoringService> {
-        &self.monitoring
-    }
-
     /// Run the worker loop, polling for new bus events and dispatching them.
     pub async fn run(&self) -> Result<()> {
         info!("pipeline worker starting");
@@ -86,10 +84,12 @@ impl<B: MessageBus, R: EventRepository> PipelineWorker<B, R> {
                     error!(event_type = %event.event_type, error = %e, "pipeline dispatch failed");
                     self.monitoring.record_error();
                     let attempt = 0;
-                    if let Err(re) = self
-                        .retry_queue
-                        .enqueue(&event.event_type, &_subject, &e.to_string(), attempt)
-                    {
+                    if let Err(re) = self.retry_queue.enqueue(
+                        &event.event_type,
+                        &_subject,
+                        &e.to_string(),
+                        attempt,
+                    ) {
                         error!(error = %re, "failed to enqueue retry job");
                     }
                 }
@@ -193,11 +193,7 @@ impl<B: MessageBus, R: EventRepository> PipelineWorker<B, R> {
             self.bus
                 .publish(
                     "extraction.document.processed",
-                    EventEnvelope::new(
-                        "extraction.document.processed",
-                        "pipeline.worker",
-                        payload,
-                    ),
+                    EventEnvelope::new("extraction.document.processed", "pipeline.worker", payload),
                 )
                 .await?;
 
@@ -285,7 +281,10 @@ mod tests {
     use objective_extraction::HeuristicExtractionService;
     use objective_ingestion::adapters::StaticSourceAdapter;
     use objective_message_bus::InMemoryMessageBus;
-use objective_store::{monitoring::MonitoringService, retry_queue::RetryQueue, snapshot::SnapshotService, RuntimeStore};
+    use objective_store::{
+        monitoring::MonitoringService, retry_queue::RetryQueue, snapshot::SnapshotService,
+        RuntimeStore,
+    };
     use std::collections::HashMap;
     use ulid::Ulid;
 
@@ -296,7 +295,11 @@ use objective_store::{monitoring::MonitoringService, retry_queue::RetryQueue, sn
 
     fn make_snapshot_service() -> Arc<SnapshotService> {
         let dir = tempfile::tempdir().unwrap().keep();
-        Arc::new(SnapshotService::new(&dir, &dir.join("state"), &dir.join("documents")))
+        Arc::new(SnapshotService::new(
+            &dir,
+            &dir.join("state"),
+            &dir.join("documents"),
+        ))
     }
 
     fn make_retry_queue() -> Arc<RetryQueue> {
@@ -322,8 +325,7 @@ use objective_store::{monitoring::MonitoringService, retry_queue::RetryQueue, sn
             external_id: "1".to_string(),
             url: None,
             title: Some("Test".to_string()),
-            body: "Apple Inc announced a 10% manufacturing expansion in Austin."
-                .to_string(),
+            body: "Apple Inc announced a 10% manufacturing expansion in Austin.".to_string(),
             body_format: BodyFormat::PlainText,
             author: None,
             published_at: None,
@@ -418,7 +420,10 @@ use objective_store::{monitoring::MonitoringService, retry_queue::RetryQueue, sn
 
         // Verify claims were fed into the event engine
         let events = event_engine.list_events().await.unwrap();
-        assert!(!events.is_empty(), "event engine should have derived events");
+        assert!(
+            !events.is_empty(),
+            "event engine should have derived events"
+        );
     }
 
     #[tokio::test]
@@ -460,7 +465,9 @@ use objective_store::{monitoring::MonitoringService, retry_queue::RetryQueue, sn
         // The document mentions "Apple Inc" — the engine should have an event about it
         let has_apple = events.iter().any(|e| {
             e.title.to_lowercase().contains("apple")
-                || e.participating_entities.iter().any(|name| name.to_lowercase().contains("apple"))
+                || e.participating_entities
+                    .iter()
+                    .any(|name| name.to_lowercase().contains("apple"))
         });
         assert!(has_apple, "derived event should mention Apple Inc");
     }
@@ -532,6 +539,9 @@ use objective_store::{monitoring::MonitoringService, retry_queue::RetryQueue, sn
         let first_claim = first_claim_from(&doc, &claim, 3);
         assert_eq!(first_claim.claim_id, format!("{}#3", doc.id));
         assert_eq!(first_claim.subject_name, "Apple Inc");
-        assert_eq!(first_claim.document_id.as_deref(), Some(doc.id.to_string().as_str()));
+        assert_eq!(
+            first_claim.document_id.as_deref(),
+            Some(doc.id.to_string().as_str())
+        );
     }
 }

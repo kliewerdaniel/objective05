@@ -107,7 +107,15 @@ impl PodcastSourceAdapter {
                 }
             }
 
-            let input = document_input_from_entry(&self.name, &feed.title.as_ref().map(|t| t.content.clone()).unwrap_or_default(), entry);
+            let input = document_input_from_entry(
+                &self.name,
+                &feed
+                    .title
+                    .as_ref()
+                    .map(|t| t.content.clone())
+                    .unwrap_or_default(),
+                entry,
+            );
             documents.push(self.normalizer.normalize(input)?);
         }
 
@@ -179,9 +187,10 @@ fn document_input_from_entry(source_id: &str, podcast_title: &str, entry: &Entry
         metadata.insert("episode_type".to_string(), json!(ep_type));
     }
 
-    let title = entry.title.as_ref().map(|title| {
-        format!("{} - {}", podcast_title, title.content)
-    });
+    let title = entry
+        .title
+        .as_ref()
+        .map(|title| format!("{} - {}", podcast_title, title.content));
 
     DocumentInput {
         source_id: source_id.to_string(),
@@ -350,8 +359,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_poll_parses_podcast_episodes_into_documents() {
-        let adapter =
-            PodcastSourceAdapter::from_xml("podcast_fixture", "https://example.com/feed.xml", PODCAST_FIXTURE);
+        let adapter = PodcastSourceAdapter::from_xml(
+            "podcast_fixture",
+            "https://example.com/feed.xml",
+            PODCAST_FIXTURE,
+        );
 
         let result = adapter.poll(None).await.unwrap();
         assert_eq!(result.documents.len(), 2);
@@ -370,8 +382,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_poll_honors_rfc3339_cursor() {
-        let adapter =
-            PodcastSourceAdapter::from_xml("podcast_fixture", "https://example.com/feed.xml", PODCAST_FIXTURE);
+        let adapter = PodcastSourceAdapter::from_xml(
+            "podcast_fixture",
+            "https://example.com/feed.xml",
+            PODCAST_FIXTURE,
+        );
 
         let result = adapter
             .poll(Some("2026-06-02T12:00:30Z".to_string()))
@@ -382,8 +397,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_one_returns_matching_document() {
-        let adapter =
-            PodcastSourceAdapter::from_xml("podcast_fixture", "https://example.com/feed.xml", PODCAST_FIXTURE);
+        let adapter = PodcastSourceAdapter::from_xml(
+            "podcast_fixture",
+            "https://example.com/feed.xml",
+            PODCAST_FIXTURE,
+        );
 
         let document = adapter.fetch_one("podcast-41").await.unwrap();
         assert_eq!(document.external_id, "podcast-41");
@@ -392,8 +410,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_health_reports_healthy_for_fixture() {
-        let adapter =
-            PodcastSourceAdapter::from_xml("podcast_fixture", "https://example.com/feed.xml", PODCAST_FIXTURE);
+        let adapter = PodcastSourceAdapter::from_xml(
+            "podcast_fixture",
+            "https://example.com/feed.xml",
+            PODCAST_FIXTURE,
+        );
         let health = adapter.health().await.unwrap();
         assert_eq!(health.status, "healthy");
     }
@@ -408,9 +429,6 @@ mod tests {
             format_duration(std::time::Duration::from_secs(3661)),
             "1:01:01"
         );
-        assert_eq!(
-            format_duration(std::time::Duration::from_secs(59)),
-            "0:59"
-        );
+        assert_eq!(format_duration(std::time::Duration::from_secs(59)), "0:59");
     }
 }

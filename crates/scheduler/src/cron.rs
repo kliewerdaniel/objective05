@@ -88,7 +88,9 @@ fn parse_cron_field(field: &str, min: u32, max: u32) -> Result<CronField, String
         return Ok(CronField::Step(step_val));
     }
 
-    let val: u32 = field.parse().map_err(|_| format!("invalid cron field: {field}"))?;
+    let val: u32 = field
+        .parse()
+        .map_err(|_| format!("invalid cron field: {field}"))?;
     if val < min || val > max {
         return Err(format!("value {val} out of range {min}-{max}"));
     }

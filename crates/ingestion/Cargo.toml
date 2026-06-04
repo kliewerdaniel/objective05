@@ -15,10 +15,13 @@ reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 ulid.workspace = true
+utoipa.workspace = true
 
 [dev-dependencies]
 objective-message-bus = { path = "../message-bus" }
 objective-store = { path = "../store" }
+tempfile.workspace = true

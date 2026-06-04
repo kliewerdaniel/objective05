@@ -98,8 +98,7 @@ impl SchedulerState {
         }
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| format!("failed to serialize state: {e}"))?;
-        std::fs::write(path, json)
-            .map_err(|e| format!("failed to write state file: {e}"))?;
+        std::fs::write(path, json).map_err(|e| format!("failed to write state file: {e}"))?;
         Ok(())
     }
 }

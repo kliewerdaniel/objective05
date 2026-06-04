@@ -22,11 +22,12 @@ repository = "https://github.com/anomalyco/objective"
 anyhow = "1.0"
 async-nats = "0.48"
 async-trait = "0.1"
-axum = "0.7"
+axum = { version = "0.7", features = ["ws"] }
 chrono = { version = "0.4", features = ["serde"] }
 config = "0.14"
 feed-rs = "2.3"
 flate2 = "1.0"
+futures = "0.3"
 regex = "1.10"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -36,6 +37,7 @@ sha2 = "0.10"
 tempfile = "3.10"
 thiserror = "1.0"
 tokio = { version = "1.38", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-stream = "0.1"
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 tracing = "0.1"

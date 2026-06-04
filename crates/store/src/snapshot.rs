@@ -22,11 +22,7 @@ pub struct SnapshotService {
 }
 
 impl SnapshotService {
-    pub fn new(
-        data_root: &Path,
-        state_dir: &Path,
-        document_root: &Path,
-    ) -> Self {
+    pub fn new(data_root: &Path, state_dir: &Path, document_root: &Path) -> Self {
         Self {
             state_dir: state_dir.to_path_buf(),
             snapshot_root: data_root.join("snapshots"),
@@ -52,9 +48,8 @@ impl SnapshotService {
         let events_path = self.state_dir.join("events.json");
         if events_path.exists() {
             let dest = snapshot_dir.join("events.json");
-            std::fs::copy(&events_path, &dest).map_err(|e| {
-                ObjectiveError::Storage(format!("failed to copy events file: {e}"))
-            })?;
+            std::fs::copy(&events_path, &dest)
+                .map_err(|e| ObjectiveError::Storage(format!("failed to copy events file: {e}")))?;
             manifest.events_file = Some("events.json".to_string());
         }
 
@@ -127,8 +122,7 @@ impl SnapshotService {
         }
 
         let data = std::fs::read_to_string(&manifest_path).map_err(storage_error)?;
-        let manifest: SnapshotManifest =
-            serde_json::from_str(&data).map_err(json_error)?;
+        let manifest: SnapshotManifest = serde_json::from_str(&data).map_err(json_error)?;
 
         if let Some(events_file) = &manifest.events_file {
             let src = snapshot_dir.join(events_file);
@@ -210,11 +204,7 @@ mod tests {
 
         // Create dummy state files
         std::fs::write(state_dir.join("events.json"), r#"[{"id":"test"}]"#).unwrap();
-        std::fs::write(
-            state_dir.join("scheduler.jobstate"),
-            r#"{"jobs":{}}"#,
-        )
-        .unwrap();
+        std::fs::write(state_dir.join("scheduler.jobstate"), r#"{"jobs":{}}"#).unwrap();
 
         let service = SnapshotService::new(&dir, &state_dir, &doc_dir);
         let snapshot_dir = service.create_snapshot().unwrap();

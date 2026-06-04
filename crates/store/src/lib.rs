@@ -1,5 +1,6 @@
 pub mod kuzu;
 pub mod monitoring;
+pub mod recovery;
 pub mod retry_queue;
 pub mod snapshot;
 pub mod vectordb;
@@ -196,6 +197,11 @@ impl ExtractionRepository for RuntimeStore {
     async fn list_extractions(&self) -> Result<Vec<ExtractionResult>> {
         Ok(self.extractions.read().await.clone())
     }
+
+    async fn replace_extractions(&self, extractions: Vec<ExtractionResult>) -> Result<()> {
+        *self.extractions.write().await = extractions;
+        Ok(())
+    }
 }
 
 impl InMemoryStore {
@@ -243,6 +249,11 @@ impl ExtractionRepository for InMemoryStore {
 
     async fn list_extractions(&self) -> Result<Vec<ExtractionResult>> {
         Ok(self.extractions.read().await.clone())
+    }
+
+    async fn replace_extractions(&self, extractions: Vec<ExtractionResult>) -> Result<()> {
+        *self.extractions.write().await = extractions;
+        Ok(())
     }
 }
 

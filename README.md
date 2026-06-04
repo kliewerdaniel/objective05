@@ -224,7 +224,31 @@ Implemented endpoints:
 - `GET /api/v1/events`
 - `GET /api/v1/entities`
 - `GET /api/v1/entities/summary`
+- `GET /api/v1/entities/:name`
 - `GET /api/v1/claims`
+- `GET /api/v1/derived-events`
+- `GET /api/v1/derived-events/top`
+- `GET /api/v1/derived-events/:id`
+- `GET /api/v1/sources`
+- `GET /api/v1/source-registry` / `POST /api/v1/source-registry` (list + create)
+- `GET /api/v1/source-registry/:name` (read)
+- `PUT /api/v1/source-registry/:name` (patch via `{ url, schedule, enabled }`)
+- `DELETE /api/v1/source-registry/:name` (remove)
+- `POST /api/v1/source-registry/:name/trigger` (on-demand poll)
+- `GET /api/v1/narratives` / `GET /api/v1/narratives/:id` (list + read)
+- `GET /api/v1/contradictions` / `GET /api/v1/contradictions/:id` (list + read)
+- `POST /api/v1/contradictions/:id/resolve` (mark as resolved with optional note)
+- `GET /api/v1/broadcasts` / `GET /api/v1/broadcasts/latest` / `GET /api/v1/broadcasts/:id` (list + latest + read)
+- `POST /api/v1/broadcasts/generate` (on-demand broadcast draft, optional `{ title, focus }`)
+- `POST /api/v1/entities/merge` (merge source entity into target, rewrites claims and relationships)
+- `POST /api/v1/events/:id/resolve` (mark derived event as resolved, optional note)
+- `GET /api/v1/search?q=...&limit=N` (substring search across documents, entities, claims)
+- `GET /api/v1/export` (JSON download of the full dataset)
+- `GET /api/v1/config` (active configuration)
+- `GET /api/v1/monitoring`
+- `GET /api/v1/recovery`
+- `POST /api/v1/recovery/check`
+- `WS /ws` (real-time bus bridge with `events` / `broadcast` / `system` channel filtering)
 - `GET /api-docs/openapi.json`
 
 The OpenAPI document at `/api-docs/openapi.json` aggregates the `utoipa` annotations from every route handler and serves a machine-readable description of the current API surface.
@@ -251,3 +275,46 @@ Documents are persisted as compressed JSON files under the configured `storage.d
 - `rss`: parses RSS and Atom feeds, preserves feed metadata, supports URL-backed polling, and has offline XML fixture tests.
 - `hacker_news`: talks to the public Algolia search API, preserves score / comment / author metadata, and has offline JSON fixture tests.
 - `fixture`: an in-memory adapter used by the first vertical slice and HTTP route tests.
+
+## Dashboard (TypeScript / React)
+
+The `dashboard/` workspace is a Vite + React + TypeScript single-page app
+that proxies to the Rust API. It ships with:
+
+- **Pages** — Live Feed, Events, Narratives, Knowledge Graph Explorer,
+  Broadcasts, Sources, and System Configuration.
+- **Live tail** — auto-reconnects to the `/ws` bus with a 15 s REST poll
+  fallback and a per-connection channel filter.
+- **Source manager** — full CRUD over the `SourceRegistry` (add / patch /
+  delete / trigger) with source-type-aware URL validation.
+- **Detail drawer** — slide-over panel that resolves document, event,
+  and entity detail from the local store cache.
+
+Run the dashboard against a local daemon:
+
+```bash
+# In one terminal: start the Rust API on :8080
+cargo run -p objective -- serve
+
+# In another: start the Vite dev server (proxies /api and /ws to :8080)
+cd dashboard
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173`.
+
+Other dashboard commands:
+
+```bash
+npm run build      # type-check + production build (tsc -b && vite build)
+npm run lint       # eslint .
+npm test           # vitest run (18 unit + component tests)
+npm run test:watch # watch mode
+```
+
+The dev server proxies `/api/*` to `http://127.0.0.1:8080` and
+`/ws` to `ws://127.0.0.1:8080`, so the SPA always talks to the local
+daemon regardless of host or port. The production build emits a static
+`dist/` bundle that the Rust gateway can serve directly in packaged
+builds (see `docs/deployment/installation.md`).

@@ -7,9 +7,7 @@ use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
 use tracing::{error, info, warn};
 
-use crate::{
-    job::{JobDefinition, JobState, JobTriggerPayload, SchedulerState},
-};
+use crate::job::{JobDefinition, JobState, JobTriggerPayload, SchedulerState};
 
 /// Configuration for the scheduler service.
 pub struct SchedulerConfig {
@@ -261,7 +259,9 @@ impl SchedulerService {
             .jobs
             .iter()
             .find(|j| j.name == job_name)
-            .ok_or_else(|| objective_core::ObjectiveError::Validation(format!("job not found: {job_name}")))?
+            .ok_or_else(|| {
+                objective_core::ObjectiveError::Validation(format!("job not found: {job_name}"))
+            })?
             .clone();
 
         let now = Utc::now();
@@ -288,9 +288,7 @@ impl SchedulerService {
             serde_json::to_value(&payload).unwrap_or_default(),
         );
 
-        self.bus
-            .publish("scheduler.job.trigger", event)
-            .await?;
+        self.bus.publish("scheduler.job.trigger", event).await?;
         info!("manually triggered job {}", job_name);
         Ok(())
     }
@@ -345,10 +343,7 @@ mod tests {
 
         let events = bus.events().await.unwrap();
         assert_eq!(events.len(), 1);
-        assert_eq!(
-            events[0].1.event_type,
-            "ingestion.poll.rss"
-        );
+        assert_eq!(events[0].1.event_type, "ingestion.poll.rss");
     }
 
     #[tokio::test]

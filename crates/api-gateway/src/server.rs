@@ -1,16 +1,23 @@
 use std::sync::Arc;
 
-use axum::{routing::get, Router};
+use axum::{
+    routing::{get, post},
+    Router,
+};
 use objective_core::traits::{DocumentRepository, ExtractionRepository};
+use objective_core::ObjectiveConfig;
 use objective_correlation::EventRepository;
+use objective_ingestion::SourceRegistry;
 use objective_message_bus::InMemoryMessageBus;
-use objective_store::monitoring::MonitoringService;
+use objective_store::{monitoring::MonitoringService, recovery::RecoveryService};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::routes::{
-    broadcasts, claims, contradictions, derived_events, docs, documents, entities, events,
-    extractions, health, monitoring, narratives, sources, stats,
+    auxiliary::AuxiliaryStores, broadcasts, claims, config, contradictions, derived_events, docs,
+    documents, entities, events, export, extractions, health, monitoring, narratives, recovery,
+    search, sources, stats,
 };
+use crate::ws::{ws_handler, WebSocketHub};
 
 pub trait ApiRepository: DocumentRepository + ExtractionRepository {}
 
@@ -28,6 +35,11 @@ pub struct ApiState {
     pub started_at: chrono::DateTime<chrono::Utc>,
     pub event_repository: Option<Arc<dyn EventRepository>>,
     pub monitoring: Option<Arc<MonitoringService>>,
+    pub recovery: Option<Arc<RecoveryService>>,
+    pub websocket_hub: Option<WebSocketHub>,
+    pub source_registry: Option<Arc<SourceRegistry>>,
+    pub auxiliary: AuxiliaryStores,
+    pub config: Option<ObjectiveConfig>,
 }
 
 impl ApiState {
@@ -38,6 +50,11 @@ impl ApiState {
             started_at: chrono::Utc::now(),
             event_repository: None,
             monitoring: None,
+            recovery: None,
+            websocket_hub: None,
+            source_registry: None,
+            auxiliary: AuxiliaryStores::new(),
+            config: None,
         }
     }
 
@@ -57,10 +74,43 @@ impl ApiState {
         self.monitoring = Some(monitoring);
         self
     }
+
+    pub fn with_recovery(mut self, recovery: Arc<RecoveryService>) -> Self {
+        self.recovery = Some(recovery);
+        self
+    }
+
+    /// Attach a WebSocket hub so `/ws` becomes a live stream of bus
+    /// events. If unset, the WebSocket route responds with 503.
+    pub fn with_websocket_hub(mut self, hub: WebSocketHub) -> Self {
+        self.websocket_hub = Some(hub);
+        self
+    }
+
+    /// Attach a source registry so `/api/v1/source-registry` becomes
+    /// available. If unset, those routes respond with 503.
+    pub fn with_source_registry(mut self, registry: Arc<SourceRegistry>) -> Self {
+        self.source_registry = Some(registry);
+        self
+    }
+
+    /// Replace the bundled auxiliary stores (narratives, broadcasts,
+    /// contradictions). Useful for tests that need to pre-seed data.
+    pub fn with_auxiliary(mut self, auxiliary: AuxiliaryStores) -> Self {
+        self.auxiliary = auxiliary;
+        self
+    }
+
+    /// Attach the active configuration so `/api/v1/config` can surface
+    /// it. Without this the config endpoint returns 503.
+    pub fn with_config(mut self, config: ObjectiveConfig) -> Self {
+        self.config = Some(config);
+        self
+    }
 }
 
 pub fn build_router(state: ApiState) -> Router {
-    Router::new()
+    let api_routes = Router::new()
         .route("/api/v1/health", get(health::get_health))
         .route("/api/v1/stats", get(stats::get_stats))
         .route("/api/v1/documents", get(documents::list_documents))
@@ -84,16 +134,79 @@ pub fn build_router(state: ApiState) -> Router {
             get(entities::list_entity_summary),
         )
         .route("/api/v1/entities/:name", get(entities::get_entity))
+        .route("/api/v1/entities/merge", post(entities::merge_entities))
         .route("/api/v1/claims", get(claims::list_claims))
         .route("/api/v1/sources", get(sources::list_sources))
+        .route(
+            "/api/v1/source-registry",
+            get(sources::list_registered_sources).post(sources::create_source),
+        )
+        .route(
+            "/api/v1/source-registry/:name",
+            get(sources::get_registered_source)
+                .put(sources::update_source)
+                .delete(sources::delete_source),
+        )
+        .route(
+            "/api/v1/source-registry/:name/trigger",
+            post(sources::trigger_source),
+        )
         .route("/api/v1/narratives", get(narratives::list_narratives))
+        .route("/api/v1/narratives/:id", get(narratives::get_narrative))
         .route(
             "/api/v1/contradictions",
             get(contradictions::list_contradictions),
         )
+        .route(
+            "/api/v1/contradictions/:id",
+            get(contradictions::get_contradiction),
+        )
+        .route(
+            "/api/v1/contradictions/:id/resolve",
+            post(contradictions::resolve_contradiction),
+        )
         .route("/api/v1/broadcasts", get(broadcasts::list_broadcasts))
+        .route(
+            "/api/v1/broadcasts/latest",
+            get(broadcasts::latest_broadcast),
+        )
+        .route("/api/v1/broadcasts/:id", get(broadcasts::get_broadcast))
+        .route(
+            "/api/v1/broadcasts/generate",
+            post(broadcasts::generate_broadcast),
+        )
         .route("/api/v1/monitoring", get(monitoring::get_metrics))
+        .route("/api/v1/recovery", get(recovery::get_recovery_state))
+        .route(
+            "/api/v1/recovery/check",
+            post(recovery::post_recovery_check),
+        )
+        .route("/api/v1/export", get(export::export_data))
+        .route("/api/v1/search", get(search::search))
+        .route("/api/v1/config", get(config::get_config))
+        .route("/api/v1/events/:id/resolve", post(events::resolve_event))
         .route("/api-docs/openapi.json", get(docs::get_openapi_spec))
+        .with_state(state.clone());
+
+    // The WebSocket route lives in its own sub-router so it can
+    // carry a `WebSocketHub` as state without forcing every other
+    // handler to type-erase around the hub.
+    let ws_routes = if state.websocket_hub.is_some() {
+        Router::new().route("/ws", get(ws_handler))
+    } else {
+        Router::new().route(
+            "/ws",
+            get(|| async {
+                (
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    "websocket hub not configured",
+                )
+            }),
+        )
+    };
+
+    api_routes
+        .merge(ws_routes)
         .with_state(state)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())

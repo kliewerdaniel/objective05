@@ -275,6 +275,8 @@ rm -rf ~/.objective
 
 ## Interfaces
 
+- `from-source.md` — building and running Objective from a source checkout
+  (current Rust workspace + Vite/React dashboard layout).
 - `operations.md` — running and updating Objective
 - `docs/architecture/architecture-decisions.md` — single binary distribution (ADR-012)
 

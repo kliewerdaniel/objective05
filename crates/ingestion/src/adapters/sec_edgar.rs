@@ -211,9 +211,7 @@ fn resolve_company_name(hit: &EdgarHit) -> Option<String> {
 }
 
 fn resolve_form_type(hit: &EdgarHit) -> Option<String> {
-    hit.source
-        .as_ref()
-        .and_then(|s| s.form_type.clone())
+    hit.source.as_ref().and_then(|s| s.form_type.clone())
 }
 
 fn resolve_published_at(hit: &EdgarHit) -> Option<DateTime<Utc>> {
@@ -272,10 +270,7 @@ impl SourceAdapter for SecEdgarAdapter {
                 "company_name".to_string(),
                 json!(resolve_company_name(&hit)),
             );
-            metadata.insert(
-                "form_type".to_string(),
-                json!(resolve_form_type(&hit)),
-            );
+            metadata.insert("form_type".to_string(), json!(resolve_form_type(&hit)));
 
             let input = DocumentInput {
                 source_id: self.name.clone(),
@@ -332,10 +327,7 @@ impl SourceAdapter for SecEdgarAdapter {
             "company_name".to_string(),
             json!(resolve_company_name(&hit)),
         );
-        metadata.insert(
-            "form_type".to_string(),
-            json!(resolve_form_type(&hit)),
-        );
+        metadata.insert("form_type".to_string(), json!(resolve_form_type(&hit)));
 
         self.normalizer.normalize(DocumentInput {
             source_id: self.name.clone(),
@@ -472,10 +464,7 @@ mod tests {
     async fn test_fetch_one_returns_matching_document() {
         let adapter = SecEdgarAdapter::from_json("sec_fixture", EDGAR_FIXTURE);
 
-        let document = adapter
-            .fetch_one("0001234567-26-000002")
-            .await
-            .unwrap();
+        let document = adapter.fetch_one("0001234567-26-000002").await.unwrap();
         assert_eq!(document.external_id, "0001234567-26-000002");
         assert!(document.body.contains("Tesla"));
     }

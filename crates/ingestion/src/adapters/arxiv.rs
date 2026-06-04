@@ -264,9 +264,7 @@ impl SourceAdapter for ArxivSourceAdapter {
             .find(|document| {
                 document.external_id == external_id || document.url.as_deref() == Some(external_id)
             })
-            .ok_or_else(|| {
-                ObjectiveError::Source(format!("arXiv paper not found: {external_id}"))
-            })
+            .ok_or_else(|| ObjectiveError::Source(format!("arXiv paper not found: {external_id}")))
     }
 
     async fn health(&self) -> Result<HealthStatus> {
@@ -369,10 +367,7 @@ mod tests {
         );
         assert!(first.body.to_lowercase().contains("transformer"));
         assert_eq!(first.metadata["search_query"], json!("cat:cs.AI"));
-        assert_eq!(
-            first.metadata["categories"],
-            json!(["cs.AI", "cs.CL"])
-        );
+        assert_eq!(first.metadata["categories"], json!(["cs.AI", "cs.CL"]));
 
         let second = &result.documents[1];
         assert_eq!(second.external_id, "http://arxiv.org/abs/2406.12346v1");

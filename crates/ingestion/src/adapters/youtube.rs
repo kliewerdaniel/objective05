@@ -131,11 +131,7 @@ impl YouTubeSourceAdapter {
 }
 
 fn document_input_from_entry(source_id: &str, channel_id: &str, entry: &Entry) -> DocumentInput {
-    let video_id = entry
-        .id
-        .rsplit(':')
-        .next()
-        .unwrap_or("unknown");
+    let video_id = entry.id.rsplit(':').next().unwrap_or("unknown");
 
     let link = entry
         .links
@@ -342,8 +338,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_poll_parses_youtube_videos_into_documents() {
-        let adapter =
-            YouTubeSourceAdapter::from_xml("yt_fixture", "UCzFRDzRn_mYVpPxyrcd_0Gg", YOUTUBE_FIXTURE);
+        let adapter = YouTubeSourceAdapter::from_xml(
+            "yt_fixture",
+            "UCzFRDzRn_mYVpPxyrcd_0Gg",
+            YOUTUBE_FIXTURE,
+        );
 
         let result = adapter.poll(None).await.unwrap();
         assert_eq!(result.documents.len(), 2);
@@ -369,8 +368,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_poll_honors_rfc3339_cursor() {
-        let adapter =
-            YouTubeSourceAdapter::from_xml("yt_fixture", "UCzFRDzRn_mYVpPxyrcd_0Gg", YOUTUBE_FIXTURE);
+        let adapter = YouTubeSourceAdapter::from_xml(
+            "yt_fixture",
+            "UCzFRDzRn_mYVpPxyrcd_0Gg",
+            YOUTUBE_FIXTURE,
+        );
 
         let result = adapter
             .poll(Some("2026-06-02T12:00:30Z".to_string()))
@@ -381,8 +383,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_one_returns_matching_document() {
-        let adapter =
-            YouTubeSourceAdapter::from_xml("yt_fixture", "UCzFRDzRn_mYVpPxyrcd_0Gg", YOUTUBE_FIXTURE);
+        let adapter = YouTubeSourceAdapter::from_xml(
+            "yt_fixture",
+            "UCzFRDzRn_mYVpPxyrcd_0Gg",
+            YOUTUBE_FIXTURE,
+        );
 
         let document = adapter.fetch_one("abc123xyz").await.unwrap();
         assert_eq!(document.external_id, "abc123xyz");
@@ -391,8 +396,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_health_reports_healthy_for_fixture() {
-        let adapter =
-            YouTubeSourceAdapter::from_xml("yt_fixture", "UCzFRDzRn_mYVpPxyrcd_0Gg", YOUTUBE_FIXTURE);
+        let adapter = YouTubeSourceAdapter::from_xml(
+            "yt_fixture",
+            "UCzFRDzRn_mYVpPxyrcd_0Gg",
+            YOUTUBE_FIXTURE,
+        );
         let health = adapter.health().await.unwrap();
         assert_eq!(health.status, "healthy");
     }

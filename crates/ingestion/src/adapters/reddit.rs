@@ -52,7 +52,11 @@ impl RedditSourceAdapter {
     }
 
     /// Build an adapter that returns a pre-canned JSON payload (for tests).
-    pub fn from_json(name: impl Into<String>, subreddit: &str, json_body: impl Into<String>) -> Self {
+    pub fn from_json(
+        name: impl Into<String>,
+        subreddit: &str,
+        json_body: impl Into<String>,
+    ) -> Self {
         Self {
             name: name.into(),
             subreddit: subreddit.to_string(),
@@ -99,9 +103,10 @@ impl RedditSourceAdapter {
             )));
         }
 
-        response.text().await.map_err(|error| {
-            ObjectiveError::Source(format!("failed to read Reddit body: {error}"))
-        })
+        response
+            .text()
+            .await
+            .map_err(|error| ObjectiveError::Source(format!("failed to read Reddit body: {error}")))
     }
 }
 
@@ -303,7 +308,9 @@ impl SourceAdapter for RedditSourceAdapter {
                     .find(|c| c.data.as_ref().map(|p| p.id.as_deref()) == Some(Some(external_id)))
                     .and_then(|c| c.data)
             })
-            .ok_or_else(|| ObjectiveError::Source(format!("Reddit post not found: {external_id}")))?;
+            .ok_or_else(|| {
+                ObjectiveError::Source(format!("Reddit post not found: {external_id}"))
+            })?;
 
         let mut metadata: HashMap<String, serde_json::Value> = HashMap::new();
         metadata.insert("subreddit".to_string(), json!(post.subreddit));

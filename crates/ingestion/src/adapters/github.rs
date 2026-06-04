@@ -185,10 +185,7 @@ fn build_body(event: &Event) -> String {
     }
 
     if parts.is_empty() {
-        return format!(
-            "GitHub event {}",
-            event.id.as_deref().unwrap_or("unknown")
-        );
+        return format!("GitHub event {}", event.id.as_deref().unwrap_or("unknown"));
     }
     parts.join(" ")
 }
@@ -299,10 +296,7 @@ impl SourceAdapter for GitHubSourceAdapter {
             );
             metadata.insert(
                 "repo_name".to_string(),
-                json!(event
-                    .repo
-                    .as_ref()
-                    .and_then(|r| r.full_name.as_deref())),
+                json!(event.repo.as_ref().and_then(|r| r.full_name.as_deref())),
             );
             metadata.insert("payload".to_string(), json!(event.payload));
 
@@ -362,10 +356,7 @@ impl SourceAdapter for GitHubSourceAdapter {
         );
         metadata.insert(
             "repo_name".to_string(),
-            json!(event
-                .repo
-                .as_ref()
-                .and_then(|r| r.full_name.as_deref())),
+            json!(event.repo.as_ref().and_then(|r| r.full_name.as_deref())),
         );
         metadata.insert("payload".to_string(), json!(event.payload));
 

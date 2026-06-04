@@ -1,14 +1,13 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 
 use chrono::Utc;
-use objective_core::{ObjectiveError, Result};
 use serde::{Deserialize, Serialize};
-use tracing::info;
+
+use utoipa::ToSchema;
 
 /// Snapshot of current pipeline metrics.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PipelineMetrics {
     pub uptime_secs: u64,
     pub documents_ingested: u64,
@@ -55,7 +54,9 @@ pub struct MonitoringService {
 
 impl MonitoringService {
     pub fn new(data_root: &Path) -> Self {
-        let persist_path = data_root.join("state").join("monitoring.json");
+        let state_dir = data_root.join("state");
+        let _ = std::fs::create_dir_all(&state_dir);
+        let persist_path = state_dir.join("monitoring.json");
         let metrics = Self::load_from_file(&persist_path);
         let started_at = std::time::Instant::now();
         Self {
@@ -153,6 +154,21 @@ impl MonitoringService {
         let mut metrics = self.metrics.read().unwrap().clone();
         metrics.uptime_secs = self.started_at.elapsed().as_secs();
         metrics
+    }
+
+    /// Return the on-disk path used to persist metrics. Used by the
+    /// recovery service and tests.
+    pub fn persist_path(&self) -> &std::path::Path {
+        &self.persist_path
+    }
+
+    /// Replace the in-memory metrics with the supplied snapshot. Intended
+    /// for tests and recovery flows that need to seed a known state.
+    pub fn replace_metrics(&self, mut metrics: PipelineMetrics) {
+        metrics.uptime_secs = self.started_at.elapsed().as_secs();
+        if let Ok(mut guard) = self.metrics.write() {
+            *guard = metrics;
+        }
     }
 
     pub fn persist_and_get(&self) -> PipelineMetrics {

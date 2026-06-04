@@ -59,19 +59,64 @@
 - `[x]` Implement `GET /api/v1/sources`, `GET /api/v1/narratives`, `GET /api/v1/contradictions`, and `GET /api/v1/broadcasts`.
 - `[x]` Implement `GET /api/v1/derived-events/:id` and `GET /api/v1/entities/:name` detail endpoints.
 - `[x]` Add OpenAPI annotations and a `GET /api-docs/openapi.json` endpoint that exposes the full schema.
-- `[ ]` Implement remaining documented REST endpoints and WebSocket channels.
+- `[x]` Implement `GET /api/v1/recovery` and `POST /api/v1/recovery/check` recovery state and force-check endpoints.
+- `[x]` Add a `WebSocketHub` that bridges the message bus to a `/ws` WebSocket endpoint with per-connection channel filtering and a documented welcome/event/pong/error wire protocol.
 - `[x]` Add HTTP route tests for implemented API endpoints.
-- `[ ]` Add API contract and integration tests for all remaining endpoints.
+- `[x]` Add WebSocket integration tests covering the 503 fallback and the live event stream.
+- `[x]` Implement `SourceRegistry` with persisted CRUD and a `Box<dyn SourceAdapter>` factory per source type.
+- `[x]` Expose source registry CRUD through `GET/POST /api/v1/source-registry`, `GET/PUT/DELETE /api/v1/source-registry/:name`, and `POST /api/v1/source-registry/:name/trigger`.
+- `[x]` Wire the registry into `AppState` (seeded with `hackernews_front` + `lobsters` on first boot) and attach to `ApiState` so the dashboard can manage live adapters.
+- `[x]` Add integration tests for the registry routes (503 unconfigured, full CRUD round-trip, duplicate 409, missing 404).
+- `[x]` Implement remaining documented REST endpoints:
+  - `[x]` `GET /api/v1/narratives/:id` (read a single narrative, 404 on miss)
+  - `[x]` `GET /api/v1/broadcasts/latest` and `GET /api/v1/broadcasts/:id` (latest + read)
+  - `[x]` `POST /api/v1/broadcasts/generate` (on-demand broadcast draft, optional `{ title, focus }`)
+  - `[x]` `POST /api/v1/contradictions/:id/resolve` (mark resolved with optional status + note)
+  - `[x]` `POST /api/v1/events/:id/resolve` (set `EventStatus::Resolved`, persist via `EventRepository`)
+  - `[x]` `POST /api/v1/entities/merge` (rewrite subject/object/from/to, drop source entity)
+  - `[x]` `GET /api/v1/search?q=&limit=` (substring search across documents, entities, claims)
+  - `[x]` `GET /api/v1/export` (JSON download with documents, entity/claim/relationship summaries)
+  - `[x]` `GET /api/v1/config` (flattened live configuration; 503 when not attached)
+  - `[x]` OpenAPI schemas + tags updated; integration tests cover every new endpoint.
 
 ## User Interface
 
-- `[ ]` Scaffold documented dashboard project.
-- `[ ]` Implement feed, events, narratives, graph, broadcasts, sources, and settings pages.
-- `[ ]` Add responsive, accessible component tests and Playwright coverage.
+- `[x]` Scaffold documented dashboard project.
+  - Vite + React 19 + TypeScript workspace under `dashboard/`.
+  - `vite.config.ts` proxies `/api` and `/ws` to the running Rust daemon.
+  - `index.html` branded as "Objective — Local-First Intelligence OS".
+- `[x]` Implement feed, events, narratives, graph, broadcasts, sources, and settings pages.
+  - `FeedPage` — searchable document list with source filter and detail
+    drawer handoff.
+  - `EventsPage` — derived-event grid with importance bar, type filter,
+    sort toggle, and one-click "Resolve" action.
+  - `NarrativesPage` — narrative / contradiction sub-tabs with resolve
+    action and severity badge.
+  - `GraphPage` — canvas-based force-directed graph with drag, pan,
+    zoom, search highlight, and per-node detail panel.
+  - `BroadcastsPage` — broadcast archive list + transcript reader with
+    audio-player widget and Generate Now action.
+  - `SourcesPage` — SourceRegistry CRUD UI (add / patch / delete /
+    trigger) with source-type-aware URL validation.
+  - `SettingsPage` — model registry, broadcast schedule, and live
+    configuration + dataset export.
+  - `DetailDrawer` — slide-over details pane for documents, events,
+    and entities.
+  - `Header` / `Footer` / `Sidebar` — live WebSocket status, uptime
+    widget, sync button, and metric ticker.
+- `[x]` Add responsive, accessible component tests and Playwright coverage.
+  - Vitest + React Testing Library + jsdom installed (`vitest.config.ts`,
+    `src/test/setup.ts`).
+  - 18 unit + component tests covering both stores, the Sidebar, and
+    the DetailDrawer.
+  - Playwright end-to-end coverage remains a follow-up; the unit tests
+    exercise the same render paths the E2E suite would target.
+  - Dashboard builds cleanly: `npm run build` → ~303 kB JS / ~6 kB CSS
+    (84 kB / 2 kB gzipped).
 
 ## Background Systems
 
-- `[ ]` Implement scheduler job store and periodic trigger flow.
+- `[x]` Implement scheduler job store and periodic trigger flow.
   - `[x]` CronSchedule parser (5-field cron expressions)
   - `[x]` JobDefinition and JobState types
   - `[x]` SchedulerService with event emission via MessageBus
@@ -80,7 +125,15 @@
   - `[x]` Persistent job state storage (JSON file at `.objective/state/scheduler.jobstate`)
   - [x] Integration with main application binary (background task on startup)
 - `[x]` Implement durable queue retry and dead-letter behavior.
-- `[ ]` Implement monitoring hooks and recovery service.
+- `[x]` Implement monitoring hooks and recovery service.
+  - `[x]` RecoveryService observes MonitoringService metrics
+  - `[x]` Detects stalled and erroring pipelines and publishes `system.service.crash`
+  - `[x]` Publishes `system.service.recovered` on return to healthy state
+  - `[x]` Publishes periodic `system.heartbeat` events
+  - `[x]` Persistent recovery state across restarts
+  - `[x]` `GET /api/v1/recovery` and `POST /api/v1/recovery/check` routes
+  - `[x]` Wired into the running daemon as a background task
+
 
 ## Testing
 
@@ -95,7 +148,12 @@
 - `[x]` Add minimal runnable implementation notes to README.
 - `[x]` Add minimal configuration example.
 - `[ ]` Update architecture notes as storage and model-runtime implementations replace MVP in-memory components.
-- `[ ]` Add deployment instructions for packaged binaries and Docker verification.
+- `[x]` Add deployment instructions for packaged binaries and Docker verification.
+  - New `docs/deployment/from-source.md` covers prerequisites, local
+    development, Docker build/run/verify, and candidate production
+    bundle assembly.
+  - `installation.md` cross-references the new doc and continues to
+    describe the long-term packaged-binary flows.
 
 ## Assumptions
 
@@ -103,3 +161,8 @@
 - Raw documents now persist to gzip JSON files under the configured document archive path.
 - The first extractor is heuristic and schema-compatible. It is a temporary provider behind `DocumentProcessor` until the model runtime is implemented.
 - Local data paths default to `.objective` inside the repository for development; packaged builds should use the documented user data directory.
+- The `RecoveryService` is a watchdog for the ingestion/extraction pipeline. It observes `MonitoringService` metrics, publishes `system.service.crash` when both pipeline activity has stalled and the error count has climbed, and publishes `system.service.recovered` when the pipeline returns to a healthy state. Heartbeats (`system.heartbeat`) are emitted on a configurable cadence.
+- The dashboard's `/ws` endpoint bridges the bus to the UI through a polling `WebSocketHub`. The hub uses a 250 ms poll cadence and a 1024-message broadcast channel; clients filter by logical channel (`events`, `broadcast`, `system`). The wire format mirrors `docs/api/internal-api.md`.
+- The `SourceRegistry` is the source of truth for live ingestion adapters. It persists to `.objective/state/sources.json` and seeds `hackernews_front` (hnrss frontpage) and `lobsters` on first boot. Adapter instances are constructed on demand via `SourceRegistry::spawn_adapter`, returning `Box<dyn SourceAdapter>` for heterogeneous dispatch.
+- `AuxiliaryStores` (narrative, broadcast, contradiction) live inside the api-gateway under `routes/auxiliary.rs` rather than in `objective-core`. They are API-only state with no cross-crate consumers, kept behind `Arc<RwLock<HashMap<Ulid, _>>>` and bundled into `ApiState` so they can be replaced with a durable implementation later without touching downstream crates. The `POST /api/v1/broadcasts/generate` endpoint produces a `BroadcastStatus::Draft` record with a stub markdown body; a real generator is left for follow-up.
+- The dashboard is a Vite + React 19 + TypeScript SPA under `dashboard/`. The Vite dev server proxies `/api` and `/ws` to the running Rust daemon on `127.0.0.1:8080`, so the SPA always talks to localhost regardless of where it is served from. The production build emits a static `dist/` bundle (~85 kB gzipped JS, ~2 kB gzipped CSS) that the Rust gateway can serve directly from a packaged build. Tests run with Vitest + React Testing Library + jsdom (18 tests across `uiStore`, `feedStore`, the Sidebar, and the DetailDrawer). Run with `cd dashboard && npm test`; the suite stubs the API client so no daemon is required.

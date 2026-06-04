@@ -69,9 +69,8 @@ impl RetryQueue {
         let path = self.queue_dir.join(format!("{id}.json"));
         let json = serde_json::to_string_pretty(&job)
             .map_err(|e| ObjectiveError::Storage(format!("failed to serialize retry job: {e}")))?;
-        std::fs::write(&path, json).map_err(|e| {
-            ObjectiveError::Storage(format!("failed to write retry job: {e}"))
-        })?;
+        std::fs::write(&path, json)
+            .map_err(|e| ObjectiveError::Storage(format!("failed to write retry job: {e}")))?;
 
         Ok(job)
     }
@@ -222,14 +221,10 @@ mod tests {
         let dir = temp_dir();
         let queue = RetryQueue::new(&dir, 3, 0);
 
-        let job = queue
-            .enqueue("test.event", "source", "error", 0)
-            .unwrap();
+        let job = queue.enqueue("test.event", "source", "error", 0).unwrap();
         assert!(queue.should_retry(&job));
 
-        let job2 = queue
-            .enqueue("test.event", "source", "error", 2)
-            .unwrap();
+        let job2 = queue.enqueue("test.event", "source", "error", 2).unwrap();
         assert!(queue.should_retry(&job2));
     }
 
@@ -238,9 +233,7 @@ mod tests {
         let dir = temp_dir();
         let queue = RetryQueue::new(&dir, 3, 60);
 
-        let job = queue
-            .enqueue("test.event", "source", "error", 3)
-            .unwrap();
+        let job = queue.enqueue("test.event", "source", "error", 3).unwrap();
         assert!(!queue.should_retry(&job));
     }
 
@@ -249,9 +242,7 @@ mod tests {
         let dir = temp_dir();
         let queue = RetryQueue::new(&dir, 3, 60);
 
-        let job = queue
-            .enqueue("test.event", "source", "error", 0)
-            .unwrap();
+        let job = queue.enqueue("test.event", "source", "error", 0).unwrap();
         queue.move_to_dead_letter(&job).unwrap();
 
         assert!(!queue.queue_dir.join(format!("{}.json", job.id)).exists());
@@ -266,9 +257,7 @@ mod tests {
         let dir = temp_dir();
         let queue = RetryQueue::new(&dir, 3, 60);
 
-        let job = queue
-            .enqueue("test.event", "source", "error", 0)
-            .unwrap();
+        let job = queue.enqueue("test.event", "source", "error", 0).unwrap();
         queue.complete(&job.id).unwrap();
 
         assert!(!queue.queue_dir.join(format!("{}.json", job.id)).exists());
@@ -279,9 +268,7 @@ mod tests {
         let dir = temp_dir();
         let queue = RetryQueue::new(&dir, 3, 0);
 
-        let job = queue
-            .enqueue("test.event", "source", "error", 0)
-            .unwrap();
+        let job = queue.enqueue("test.event", "source", "error", 0).unwrap();
 
         let ready = queue.ready_jobs().unwrap();
         assert_eq!(ready.len(), 1);
@@ -293,9 +280,7 @@ mod tests {
         let dir = temp_dir();
         let queue = RetryQueue::new(&dir, 3, 60);
 
-        let job = queue
-            .enqueue("test.event", "source", "error", 0)
-            .unwrap();
+        let job = queue.enqueue("test.event", "source", "error", 0).unwrap();
         let job2 = queue.re_enqueue(&job).unwrap();
 
         assert_eq!(job2.retry_count, 1);
@@ -308,9 +293,7 @@ mod tests {
         let dir = temp_dir();
         let queue = RetryQueue::new(&dir, 3, 60);
 
-        let job = queue
-            .enqueue("test.event", "source", "error", 2)
-            .unwrap();
+        let job = queue.enqueue("test.event", "source", "error", 2).unwrap();
         let job2 = queue.re_enqueue(&job).unwrap();
 
         assert_eq!(job2.retry_count, 3);
@@ -326,9 +309,7 @@ mod tests {
         let dir = temp_dir();
         let queue = RetryQueue::new(&dir, 3, 60);
 
-        let job = queue
-            .enqueue("test.event", "source", "error", 0)
-            .unwrap();
+        let job = queue.enqueue("test.event", "source", "error", 0).unwrap();
         queue.move_to_dead_letter(&job).unwrap();
 
         let dead = queue.dead_letters().unwrap();
