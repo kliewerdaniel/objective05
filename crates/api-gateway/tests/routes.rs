@@ -18,6 +18,9 @@ use objective_correlation::{EventEngine, InMemoryEventRepository};
 use objective_extraction::HeuristicExtractionService;
 use objective_ingestion::{adapters::StaticSourceAdapter, IngestionService, SourceRegistry};
 use objective_message_bus::InMemoryMessageBus;
+use objective_plugin_host::{
+    audit_log_plugin, re_emitter_plugin, BuiltinPlugin, HostConfig, PluginHost,
+};
 use objective_store::{
     monitoring::MonitoringService,
     recovery::{RecoveryConfig, RecoveryService},
@@ -1162,4 +1165,223 @@ async fn test_event_resolve_returns_503_when_repository_unset() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+fn make_plugin_host(bus: Arc<InMemoryMessageBus>) -> Arc<PluginHost<InMemoryMessageBus>> {
+    let dir = tempfile::tempdir().unwrap();
+    let host = Arc::new(
+        PluginHost::new(
+            Arc::clone(&bus),
+            dir.path().join("plugins.json"),
+            HostConfig::default(),
+        )
+        .unwrap(),
+    );
+    let audit_manifest = objective_plugin_host::builtin_manifest(
+        "audit-log",
+        objective_plugin_host::PluginType::Filter,
+        "0.1.0",
+        vec!["ingestion.document.received".to_string()],
+    );
+    let re_manifest = objective_plugin_host::builtin_manifest(
+        "re-emitter",
+        objective_plugin_host::PluginType::Processor,
+        "0.1.0",
+        vec!["extraction.document.processed".to_string()],
+    );
+    let audit_inner = audit_log_plugin(vec!["ingestion.document.received".to_string()]);
+    let re_inner = re_emitter_plugin(
+        vec!["extraction.document.processed".to_string()],
+        "plugin.re_emitted",
+    );
+    futures::executor::block_on(async {
+        host.register_builtin(BuiltinPlugin::new(audit_manifest, audit_inner))
+            .await
+            .unwrap();
+        host.register_builtin(BuiltinPlugin::new(re_manifest, re_inner))
+            .await
+            .unwrap();
+    });
+    host
+}
+
+#[tokio::test]
+async fn test_plugins_list_returns_503_when_unconfigured() {
+    let app = build_router(ApiState::new(
+        Arc::new(InMemoryStore::new()),
+        Arc::new(InMemoryMessageBus::new()),
+    ));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/plugins")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn test_plugins_list_returns_registered_plugins() {
+    let bus = Arc::new(InMemoryMessageBus::new());
+    let host = make_plugin_host(Arc::clone(&bus));
+    let app = build_router(
+        ApiState::new(Arc::new(InMemoryStore::new()), Arc::clone(&bus)).with_plugin_host(host),
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/plugins")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body_bytes = to_bytes(response.into_body(), 4096).await.unwrap();
+    let payload: Value = serde_json::from_slice(&body_bytes).unwrap();
+    let total = payload["total"].as_u64().unwrap();
+    assert_eq!(total, 2);
+    let names: Vec<&str> = payload["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"audit-log"));
+    assert!(names.contains(&"re-emitter"));
+}
+
+#[tokio::test]
+async fn test_plugins_get_returns_404_for_unknown() {
+    let bus = Arc::new(InMemoryMessageBus::new());
+    let host = make_plugin_host(Arc::clone(&bus));
+    let app = build_router(
+        ApiState::new(Arc::new(InMemoryStore::new()), Arc::clone(&bus)).with_plugin_host(host),
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/plugins/does-not-exist")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_plugins_get_returns_status_when_present() {
+    let bus = Arc::new(InMemoryMessageBus::new());
+    let host = make_plugin_host(Arc::clone(&bus));
+    let app = build_router(
+        ApiState::new(Arc::new(InMemoryStore::new()), Arc::clone(&bus)).with_plugin_host(host),
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/plugins/audit-log")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body_bytes = to_bytes(response.into_body(), 4096).await.unwrap();
+    let payload: Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(payload["name"], "audit-log");
+    assert_eq!(payload["plugin_type"], "filter");
+    // The state is "validated" until the host's main run loop
+    // marks each plugin as "running"; this test doesn't run the loop.
+    assert_eq!(payload["state"], "validated");
+}
+
+#[tokio::test]
+async fn test_plugins_restart_increments_restart_count() {
+    let bus = Arc::new(InMemoryMessageBus::new());
+    let host = make_plugin_host(Arc::clone(&bus));
+    let app = build_router(
+        ApiState::new(Arc::new(InMemoryStore::new()), Arc::clone(&bus))
+            .with_plugin_host(Arc::clone(&host)),
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/plugins/audit-log/restart")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body_bytes = to_bytes(response.into_body(), 4096).await.unwrap();
+    let payload: Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(payload["name"], "audit-log");
+    assert!(payload["restart_count"].as_u64().unwrap() >= 1);
+}
+
+#[tokio::test]
+async fn test_plugins_restart_returns_404_for_unknown() {
+    let bus = Arc::new(InMemoryMessageBus::new());
+    let host = make_plugin_host(Arc::clone(&bus));
+    let app = build_router(
+        ApiState::new(Arc::new(InMemoryStore::new()), Arc::clone(&bus)).with_plugin_host(host),
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/plugins/does-not-exist/restart")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_plugins_reload_returns_503_when_unconfigured() {
+    let app = build_router(ApiState::new(
+        Arc::new(InMemoryStore::new()),
+        Arc::new(InMemoryMessageBus::new()),
+    ));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/plugins/reload")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn test_plugins_reload_returns_registered_plugin_names() {
+    let bus = Arc::new(InMemoryMessageBus::new());
+    let host = make_plugin_host(Arc::clone(&bus));
+    let app = build_router(
+        ApiState::new(Arc::new(InMemoryStore::new()), Arc::clone(&bus)).with_plugin_host(host),
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/plugins/reload")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body_bytes = to_bytes(response.into_body(), 4096).await.unwrap();
+    let payload: Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert!(payload["reloaded"].as_u64().unwrap() >= 2);
 }

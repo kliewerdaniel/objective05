@@ -30,6 +30,10 @@ use crate::routes::{
     health::{HealthResponse, ServiceHealth},
     monitoring::MonitoringResponse,
     narratives::{Narrative, NarrativeDetailResponse, NarrativeError, NarrativesResponse},
+    plugins::{
+        PluginErrorResponse, PluginReloadResponse, PluginStatusResponse, PluginSubscriptions,
+        PluginsListResponse,
+    },
     recovery::{RecoveryCheckResponse, RecoveryErrorBody, RecoveryResponse},
     search::{ClaimHit, DocumentHit, EntityHit, SearchResponse},
     sources::{
@@ -87,6 +91,10 @@ use crate::routes::{
         crate::routes::export::export_data,
         crate::routes::search::search,
         crate::routes::config::get_config,
+        crate::routes::plugins::list_plugins,
+        crate::routes::plugins::get_plugin,
+        crate::routes::plugins::restart_plugin,
+        crate::routes::plugins::reload_plugins,
     ),
     components(
         schemas(
@@ -152,6 +160,11 @@ use crate::routes::{
             ClaimHit,
             ConfigResponse,
             ConfigError,
+            PluginStatusResponse,
+            PluginSubscriptions,
+            PluginsListResponse,
+            PluginErrorResponse,
+            PluginReloadResponse,
             RecoveryResponse,
             RecoveryCheckResponse,
             RecoveryErrorBody,
@@ -193,6 +206,7 @@ use crate::routes::{
         (name = "export", description = "Bulk JSON export of the running dataset."),
         (name = "search", description = "Substring search across documents, entities, and claims."),
         (name = "config", description = "Active configuration of the running gateway."),
+        (name = "plugins", description = "Plugin host: list, inspect, restart, and reload registered plugins."),
         (name = "recovery", description = "Pipeline health, crash detection, and recovery state."),
     )
 )]

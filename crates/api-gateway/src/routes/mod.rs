@@ -13,6 +13,7 @@ pub mod extractions;
 pub mod health;
 pub mod monitoring;
 pub mod narratives;
+pub mod plugins;
 pub mod recovery;
 pub mod search;
 pub mod sources;

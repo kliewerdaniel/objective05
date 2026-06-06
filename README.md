@@ -245,6 +245,10 @@ Implemented endpoints:
 - `GET /api/v1/search?q=...&limit=N` (substring search across documents, entities, claims)
 - `GET /api/v1/export` (JSON download of the full dataset)
 - `GET /api/v1/config` (active configuration)
+- `GET /api/v1/plugins` (list every registered plugin)
+- `GET /api/v1/plugins/:name` (read a single plugin)
+- `POST /api/v1/plugins/:name/restart` (force-restart a plugin)
+- `POST /api/v1/plugins/reload` (re-validate the registry)
 - `GET /api/v1/monitoring`
 - `GET /api/v1/recovery`
 - `POST /api/v1/recovery/check`

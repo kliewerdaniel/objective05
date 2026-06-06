@@ -1,0 +1,22 @@
+[package]
+name = "objective-plugin-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+objective-core = { path = "../core" }
+objective-message-bus = { path = "../message-bus" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+ulid.workspace = true
+utoipa.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

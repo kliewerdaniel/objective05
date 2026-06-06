@@ -15,6 +15,7 @@ objective-correlation = { path = "../correlation" }
 objective-extraction = { path = "../extraction" }
 objective-ingestion = { path = "../ingestion" }
 objective-message-bus = { path = "../message-bus" }
+objective-plugin-host = { path = "../plugin-host" }
 objective-scheduler = { path = "../scheduler" }
 objective-store = { path = "../store" }
 serde_json.workspace = true

@@ -12,6 +12,9 @@ use objective_ingestion::{
     IngestionService, SourceDefinition, SourceRegistry, SourceType,
 };
 use objective_message_bus::InMemoryMessageBus;
+use objective_plugin_host::{
+    audit_log_plugin, re_emitter_plugin, BuiltinPlugin, HostConfig, PluginHost,
+};
 use objective_scheduler::{SchedulerConfig, SchedulerService};
 use objective_store::{
     kuzu::KuzuGraphStore,
@@ -39,6 +42,7 @@ pub struct AppState {
     pub recovery: Arc<RecoveryService>,
     pub websocket_hub: WebSocketHub,
     pub source_registry: Arc<SourceRegistry>,
+    pub plugin_host: Arc<PluginHost<InMemoryMessageBus>>,
 }
 
 impl AppState {
@@ -119,6 +123,57 @@ impl AppState {
             }
         }
 
+        // Plugin host: registers two built-in plugins (audit log and
+        // re-emitter) so the local-first runtime has a working plugin
+        // pipeline out of the box. External plugins are discovered from
+        // `.objective/plugins/<name>/plugin.json` if any are present.
+        let plugin_host = Arc::new(PluginHost::new(
+            Arc::clone(&bus),
+            state_dir.join("plugins.json"),
+            HostConfig::default(),
+        )?);
+        if let Err(err) = plugin_host
+            .register_builtin(BuiltinPlugin::new(
+                objective_plugin_host::builtin_manifest(
+                    "audit-log",
+                    objective_plugin_host::PluginType::Filter,
+                    "0.1.0",
+                    vec![
+                        "ingestion.document.received".to_string(),
+                        "extraction.document.processed".to_string(),
+                        "correlation.event.detected".to_string(),
+                        "broadcast.generated".to_string(),
+                    ],
+                ),
+                audit_log_plugin(vec![
+                    "ingestion.document.received".to_string(),
+                    "extraction.document.processed".to_string(),
+                    "correlation.event.detected".to_string(),
+                    "broadcast.generated".to_string(),
+                ]),
+            ))
+            .await
+        {
+            warn!(?err, "failed to register audit-log plugin");
+        }
+        if let Err(err) = plugin_host
+            .register_builtin(BuiltinPlugin::new(
+                objective_plugin_host::builtin_manifest(
+                    "re-emitter",
+                    objective_plugin_host::PluginType::Processor,
+                    "0.1.0",
+                    vec!["extraction.document.processed".to_string()],
+                ),
+                re_emitter_plugin(
+                    vec!["extraction.document.processed".to_string()],
+                    "plugin.re_emitted",
+                ),
+            ))
+            .await
+        {
+            warn!(?err, "failed to register re-emitter plugin");
+        }
+
         Ok(Self {
             store,
             bus,
@@ -131,6 +186,7 @@ impl AppState {
             recovery,
             websocket_hub,
             source_registry,
+            plugin_host,
         })
     }
 
@@ -196,7 +252,8 @@ pub async fn serve(config: ObjectiveConfig) -> anyhow::Result<()> {
         .with_monitoring(Arc::clone(&state.monitoring))
         .with_recovery(Arc::clone(&state.recovery))
         .with_websocket_hub(state.websocket_hub.clone())
-        .with_source_registry(Arc::clone(&state.source_registry));
+        .with_source_registry(Arc::clone(&state.source_registry))
+        .with_plugin_host(Arc::clone(&state.plugin_host) as Arc<_>);
 
     let app = build_router(api_state);
     let addr = SocketAddr::from(([127, 0, 0, 1], config.api.rest_port));
@@ -221,6 +278,14 @@ pub async fn serve(config: ObjectiveConfig) -> anyhow::Result<()> {
     tokio::spawn(async move {
         if let Err(e) = recovery.start().await {
             tracing::error!("recovery service error: {e}");
+        }
+    });
+
+    // Start plugin host in background
+    let plugin_host = Arc::clone(&state.plugin_host);
+    tokio::spawn(async move {
+        if let Err(e) = plugin_host.run().await {
+            tracing::error!("plugin host error: {e}");
         }
     });
 
