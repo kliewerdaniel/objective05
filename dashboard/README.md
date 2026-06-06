@@ -2,6 +2,20 @@
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
+## Scripts
+
+- `npm run dev` — start the Vite dev server with HMR.
+- `npm run build` — `tsc -b && vite build`; typechecks then bundles.
+- `npm run preview` — serve the production bundle.
+- `npm run lint` — ESLint over the source tree.
+- `npm test` — run the Vitest suite once (jsdom + Testing Library).
+- `npm run test:watch` — run the Vitest suite in watch mode.
+
+Test files live next to the module under test (`*.test.ts` / `*.test.tsx`)
+and the global `setup.ts` is at `src/test/setup.ts`. The runner uses
+`vitest.config.mjs`, which extends the same Vite plugin pipeline as
+`vite.config.ts`, so React + TSX work out of the box.
+
 Currently, two official plugins are available:
 
 - [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)

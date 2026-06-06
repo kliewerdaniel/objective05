@@ -1,17 +1,17 @@
-// Vitest setup: extend `expect` with the @testing-library/jest-dom
-// matchers (toBeInTheDocument, toHaveTextContent, etc.) and stub the
-// `matchMedia` API which some component stylesheets read at mount.
-import '@testing-library/jest-dom/vitest'
+// Vitest setup. Loaded once per test file.
+//
+// - Wires up `@testing-library/jest-dom` matchers (`toBeInTheDocument`,
+//   `toHaveTextContent`, etc.) into the global expect.
+// - Provides a stable `window.location` so hooks that read it (e.g.
+//   the WebSocket hook builds its URL from the host) get a
+//   predictable value across tests.
 
-if (!window.matchMedia) {
-  window.matchMedia = (query: string) => ({
-    matches: false,
-    media: query,
-    onchange: null,
-    addListener: () => {},
-    removeListener: () => {},
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    dispatchEvent: () => false,
-  })
+import '@testing-library/jest-dom/vitest';
+
+if (typeof window !== 'undefined') {
+  Object.defineProperty(window, 'location', {
+    value: { host: 'localhost:5173', protocol: 'http:' },
+    writable: true,
+    configurable: true,
+  });
 }
