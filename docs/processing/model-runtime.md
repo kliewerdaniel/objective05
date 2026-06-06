@@ -242,6 +242,14 @@ Each phase is shippable behind a `local-models` Cargo feature so default builds 
 - Wire `bge-small-en-v1.5` lookup; document the expected path in `objective.yaml`
 - Add a `vector_index: ModelIndex` sidecar on `ExtractionResult` so the existing `LanceDB` stub can consume it
 
+### Phase 2.5 — Real `ort::Session` integration
+- `OnnxRuntime` gains a real `ort::Session` path behind the `onnx` Cargo feature. The `ort` crate is pinned to `=2.0.0-rc.12` (the latest pre-release on crates.io) with `default-features = false, features = ["std", "ndarray", "download-binaries", "copy-dylibs", "tls-native"]`. The `download-binaries` strategy fetches the official ONNX Runtime release from Microsoft at build time; `copy-dylibs` keeps the dynamic library next to the test binary so `cargo test` works out of the box on macOS.
+- `OnnxRuntime::from_ort_path(slot, sequence_length)` is the entry point. It uses `ort::session::Session::builder()?.commit_from_file(&slot.path)` to load the model and stores it in `Arc<std::sync::Mutex<ort::session::Session>>` so the async `ModelRuntime::infer` method can borrow it through `tokio::task::spawn_blocking` without holding a tokio lock across an `await`. Default builds still hit the deterministic hash-based stub (`BackendKind::Stub`); flipping the `onnx` feature on and constructing the runtime via `from_ort_path` flips the dispatch to `BackendKind::Ort`.
+- The real `infer` path builds a placeholder `i64` `input_ids` tensor of shape `[1, sequence_length]` from a simple byte-hash of the input text, runs `session.run(ort::inputs!["input_ids" => tensor])`, and decodes the first output via `try_extract_tensor::<f32>` (returns `(&Shape, &[f32])`). The vector is L2-normalised and the dimension is reconciled with the configured `EmbeddingSlot::dimension` (a `warn!` fires on mismatch). Real tokenization (HF `tokenizers` crate, BGE-specific input ids + attention masks) lands in Phase 4.
+- `OnnxRuntime::backend_kind()` returns `BackendKind::Stub` or `BackendKind::Ort` so the route layer and tests can introspect which path served the request. `OnnxRuntime::is_onnx_enabled()` exposes the compile-time feature flag.
+- The `onnx` feature is opt-in. Default builds (`cargo build`, `cargo test --workspace`) stay free of the ONNX runtime binary. Operators flip the feature on for production deployments and rebuild.
+- Tests: `real_onnx_inference_produces_vector` runs only when `OBJECTIVE_ONNX_TEST_MODEL` points at a real `.onnx` file (e.g. the bge-small-en-v1.5 export); the test asserts the output dimension matches the configured `EmbeddingSlot::dimension` and the vector is L2-normalised. `real_onnx_missing_model_returns_backend_error` always runs and asserts that an attempt to load a bogus path returns `ModelError::Backend`.
+
 ### Phase 3 — llama.cpp LLM
 - Add `llama-cpp-rs` behind the `llama` feature
 - Implement `LocalModelRuntime::run_llama` for `NER`, `ClaimExtraction`, `RelationExtraction`
