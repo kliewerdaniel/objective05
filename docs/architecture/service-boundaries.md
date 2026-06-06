@@ -33,22 +33,26 @@ This document covers all internal services, their precise boundaries, data owner
 ├──────────────────────────────────────────────────────────┤
 │  1. Scheduler Service                                     │
 │  2. Ingestion Service (with Source Adapters)              │
-│  3. Document Store Service                                │
-│  4. Extraction Service                                    │
-│  5. Embedding Service                                     │
-│  6. Knowledge Graph Service                               │
-│  7. Correlation Service                                   │
+│  3. Source Registry Service                               │
+│  4. Document Store Service                                │
+│  5. Extraction Service                                    │
+│  6. Embedding Service                                     │
+│  7. Knowledge Graph Service                               │
+│  8. Correlation Service                                   │
 │     ├─ Event Engine                                       │
 │     ├─ Narrative Engine                                   │
 │     └─ Contradiction Engine                               │
-│  8. Broadcast Service                                     │
+│  9. Event Repository Service                              │
+│ 10. Broadcast Service                                     │
 │     ├─ Report Generator                                   │
 │     ├─ Priority Selector                                  │
 │     └─ Audio Generator                                    │
-│  9. Model Runtime Service                                 │
-│ 10. Health Service                                        │
-│ 11. API Gateway                                           │
-│ 12. Plugin Host                                           │
+│ 11. Model Runtime Service                                 │
+│ 12. Monitoring Service                                    │
+│ 13. Recovery Service                                      │
+│ 14. Health Service                                        │
+│ 15. API Gateway                                           │
+│ 16. Plugin Host                                           │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -109,11 +113,12 @@ jobs:
 - Fetch documents from sources
 - Normalize documents to internal format
 - Publish raw documents to the document queue
+- Materialise adapters on demand from the Source Registry
 
 **Inputs:**
 - `scheduler.job.trigger` events with type `ingestion.*`
-- Source configuration (URLs, credentials, polling intervals)
-- Manual fetch commands from API (UI-triggered fetch)
+- Source definitions from the Source Registry
+- Manual fetch commands from API (UI-triggered fetch, `POST /api/v1/source-registry/:name/trigger`)
 
 **Outputs:**
 - `ingestion.document.received` event per document
@@ -162,7 +167,37 @@ trait SourceAdapter {
 
 ---
 
-### 3. Document Store Service
+### 3. Source Registry Service
+
+**Ownership:** Persisted catalog of user-managed ingestion sources
+
+**Responsibility:**
+- Persist `SourceDefinition` records (name, type, URL, schedule, enabled) to a JSON file under the data root
+- Expose CRUD through the API gateway
+- Materialise `Box<dyn SourceAdapter>` instances on demand via `SourceRegistry::spawn_adapter`
+- Default-seed `hackernews_front` and `lobsters` on first boot
+
+**Inputs:**
+- API requests (`GET/POST/PUT/DELETE /api/v1/source-registry[/:name]`)
+- Manual trigger requests (`POST /api/v1/source-registry/:name/trigger`)
+
+**Outputs:**
+- `SourceDefinition` records returned to the API
+- Materialised `Box<dyn SourceAdapter>` for the Ingestion Service to poll
+
+**Storage:**
+- Single JSON file at `.objective/state/sources.json`
+- Guarded by `tokio::sync::RwLock` so API CRUD and the pipeline worker can read/write concurrently
+
+**Failure Modes:**
+- Disk write failure: Surface `RegistryError::Storage` to the API; the in-memory state remains the source of truth until the next successful flush
+- Duplicate `name` on create: Return `RegistryError::AlreadyExists` (HTTP 409)
+- Unknown `name` on update/delete/trigger: Return `RegistryError::NotFound` (HTTP 404)
+- Invalid `url` for the chosen `source_type`: Returned as 400 Bad Request from the gateway
+
+---
+
+### 4. Document Store Service
 
 **Ownership:** Raw document persistence
 
@@ -195,7 +230,7 @@ trait SourceAdapter {
 
 ---
 
-### 4. Extraction Service
+### 5. Extraction Service
 
 **Ownership:** Entity, claim, and relationship extraction from raw documents
 
@@ -263,7 +298,7 @@ trait SourceAdapter {
 
 ---
 
-### 5. Embedding Service
+### 6. Embedding Service
 
 **Ownership:** Text embedding generation
 
@@ -297,7 +332,7 @@ model:
 
 ---
 
-### 6. Knowledge Graph Service
+### 7. Knowledge Graph Service
 
 **Ownership:** Kuzu DB lifecycle, graph operations, query API
 
@@ -332,13 +367,13 @@ model:
 
 ---
 
-### 7. Correlation Service
+### 8. Correlation Service
 
 **Ownership:** Event formation, narrative detection, contradiction detection
 
 **Sub-services:**
 
-#### 7a. Event Engine
+#### 8a. Event Engine
 
 **Responsibility:**
 - Group related claims into events
@@ -351,7 +386,7 @@ model:
 
 **Outputs:** Event mutations, `correlation.event.*` events
 
-#### 7b. Narrative Engine
+#### 8b. Narrative Engine
 
 **Responsibility:**
 - Cluster related events into narratives
@@ -364,7 +399,7 @@ model:
 
 **Outputs:** Narrative mutations, `correlation.narrative.*` events
 
-#### 7c. Contradiction Engine
+#### 8c. Contradiction Engine
 
 **Responsibility:**
 - Detect contradictory claims about the same subject
@@ -379,13 +414,48 @@ model:
 
 ---
 
-### 8. Broadcast Service
+### 9. Event Repository Service
+
+**Ownership:** Persistence of derived `Event` records (the correlation engine's output)
+
+**Responsibility:**
+- Persist `Event` records produced by the Event Engine
+- Provide lookup by id and bulk listing for the API
+- Replace the full event set during maintenance / status transitions
+- Survive daemon restarts (file-backed implementation)
+
+**Interface:**
+```rust
+#[async_trait]
+trait EventRepository: Send + Sync {
+    async fn save_event(&self, event: Event) -> Result<()>;
+    async fn list_events(&self) -> Result<Vec<Event>>;
+    async fn get_event(&self, id: &str) -> Result<Option<Event>>;
+    async fn replace_all(&self, events: Vec<Event>) -> Result<()>;
+}
+```
+
+**Implementations:**
+- `InMemoryEventRepository` — used by the runtime test suite and as a fast in-process cache
+- `FileEventRepository` — production runtime; writes the full event set to a JSON file at `.objective/state/events.json` after every mutation using a write-to-temp-then-rename atomic flush
+
+**Inputs:** `Event` records from the Event Engine, status updates from the API (`POST /api/v1/events/:id/resolve`)
+
+**Outputs:** `Event` records returned to the API, persistence to disk
+
+**Failure Modes:**
+- Disk write failure: Surface as `ObjectiveError::Storage`; the in-memory copy is preserved until the next successful flush
+- JSON parse failure on load: Treat as empty store, log a warning, continue (operator can inspect or delete the corrupted file)
+
+---
+
+### 10. Broadcast Service
 
 **Ownership:** Report generation, audio generation, broadcast scheduling
 
 **Sub-services:**
 
-#### 8a. Report Generator
+#### 10a. Report Generator
 
 **Responsibility:**
 - Query knowledge graph for broadcast-relevant content
@@ -397,7 +467,7 @@ model:
 
 **Outputs:** Report text, `broadcast.report.generated` event
 
-#### 8b. Priority Selector
+#### 10b. Priority Selector
 
 **Responsibility:**
 - Rank all pending content by priority
@@ -409,7 +479,7 @@ model:
 
 **Outputs:** Prioritized broadcast queue
 
-#### 8c. Audio Generator
+#### 10c. Audio Generator
 
 **Responsibility:**
 - Convert report text to speech
@@ -424,7 +494,7 @@ model:
 
 ---
 
-### 9. Model Runtime Service
+### 11. Model Runtime Service
 
 **Ownership:** LLM and embedding model lifecycle
 
@@ -463,7 +533,48 @@ models:
 
 ---
 
-### 10. Health Service
+### 12. Monitoring Service
+
+**Ownership:** Per-pipeline counters and uptime tracking
+
+**Responsibility:**
+- Record pipeline activity (`document_ingested`, `extraction_completed`, `event_detected`, `pipeline_cycle`, `retry`, `dead_letter`, `snapshot_created`, `error`)
+- Track daemon uptime and last activity timestamp
+- Persist the metric snapshot to `.objective/state/monitoring.json` so counters survive a restart
+- Expose counters via `GET /api/v1/monitoring`
+
+**Inputs:** Counter updates from the pipeline worker, scheduler, retry queue, and snapshot service
+
+**Outputs:** `PipelineMetrics` JSON, persisted snapshot
+
+**Failure Modes:**
+- Persist failure: Counters stay accurate in memory; the on-disk snapshot may lag by one write
+
+---
+
+### 13. Recovery Service
+
+**Ownership:** Pipeline stall detection and recovery publishing
+
+**Responsibility:**
+- Poll the Monitoring Service on a configurable cadence
+- Compare the current metric snapshot against the previous one to detect a stalled pipeline (no activity, error count climbing)
+- Publish `system.service.crash` when both `pipeline_cycles` stopped advancing and `errors` grew within the window
+- Publish `system.service.recovered` when the pipeline returns to a healthy state
+- Publish periodic `system.heartbeat` events on a separate cadence
+- Persist recovery history (capped) and the last-checked timestamp to `.objective/state/recovery.json` so an operator can audit past incidents
+- Expose state via `GET /api/v1/recovery` and force a check via `POST /api/v1/recovery/check`
+
+**Inputs:** `PipelineMetrics` snapshots from the Monitoring Service, API force-check requests
+
+**Outputs:** `system.heartbeat`, `system.service.crash`, `system.service.recovered` events on the message bus; recovery JSON
+
+**Failure Modes:**
+- Monitoring Service unreachable: Skip this tick, do not flip to `Crash`; the watchdog itself never publishes a crash based on its own outage
+
+---
+
+### 14. Health Service
 
 **Ownership:** System monitoring and self-healing
 
@@ -477,7 +588,7 @@ models:
 
 ---
 
-### 11. API Gateway
+### 15. API Gateway
 
 **Ownership:** External API, Web UI, client communication
 
@@ -487,20 +598,64 @@ models:
 - Proxy dashboard queries to appropriate services
 - Stream real-time events to WebSocket clients
 - Serve dashboard static assets
+- Expose operator-managed surfaces for the Source Registry and Plugin Host
+  - `GET/POST /api/v1/source-registry`, `GET/PUT/DELETE /api/v1/source-registry/:name`, `POST /api/v1/source-registry/:name/trigger`
+  - `GET /api/v1/plugins`, `GET /api/v1/plugins/:name`, `POST /api/v1/plugins/:name/restart`, `POST /api/v1/plugins/reload`
+- Expose the Monitoring and Recovery services
+  - `GET /api/v1/monitoring`
+  - `GET /api/v1/recovery`, `POST /api/v1/recovery/check`
+- Surface the live configuration via `GET /api/v1/config` (503 when not attached)
+- Bridge the in-process `MessageBus` to a `/ws` WebSocket endpoint with per-connection channel filtering (`events`, `broadcast`, `system`) and a documented welcome / event / pong / error wire protocol
+- Publish an OpenAPI schema at `GET /api-docs/openapi.json` (utoipa-annotated handlers)
 
 ---
 
-### 12. Plugin Host
+### 16. Plugin Host
 
-**Ownership:** Plugin lifecycle management
+**Ownership:** Plugin lifecycle management and event routing to plugins
 
 **Responsibility:**
-- Discover plugins in well-known directories
-- Start and stop plugin processes
-- Manage plugin gRPC connections
-- Route events to plugin subscriptions
-- Handle plugin crashes (restart with backoff)
-- Validate plugin output
+- Discover plugin manifests under `.objective/plugins/<name>/plugin.json`
+- Register built-in plugins (in-process `Arc<dyn Plugin>` objects) at startup
+- Validate, start, and stop each registered plugin (`on_start` / `on_stop`)
+- Route bus events to plugins whose manifest subscription filters match (`event_types`, optional `entity_types`)
+- Call `check_health` on a configurable cadence
+- Track lifecycle state per plugin (`Discovered`, `Validated`, `Running`, `Error`)
+- Persist plugin state to `.objective/state/plugins.json` and individual `PluginOutput::State` key/value entries to the same file
+- Surface plugin status via `GET /api/v1/plugins`, `GET /api/v1/plugins/:name`, `POST /api/v1/plugins/:name/restart`, `POST /api/v1/plugins/reload`
+- Increment a per-plugin `consecutive_failures` counter on handler error or timeout (handler is wrapped in a tokio timeout) and a `restart_count` on each forced restart
+
+**Plugin Trait:**
+```rust
+#[async_trait]
+trait Plugin: Send + Sync {
+    fn manifest(&self) -> &PluginManifest;
+    async fn on_start(&self) -> Result<(), PluginError>;
+    async fn on_stop(&self) -> Result<(), PluginError>;
+    async fn handle(&self, event: &EventEnvelope) -> Result<Vec<PluginOutput>, PluginError>;
+    async fn check_health(&self) -> PluginHealth;
+}
+```
+
+**v1 Scope (in-process only):**
+- Built-in plugins are `Arc<dyn Plugin>` objects registered at startup
+- Discovered manifests are mounted as `NoopPlugin` placeholders so they show up in the API and counts; their `event_types` and `entity_types` are honoured for routing
+- The gRPC contract from `docs/api/plugin-api.md` is the future upgrade path; the API surface and lifecycle states mirror the spec so the swap is mechanical
+
+**Built-ins Shipped Today:**
+- `audit-log` — records every event the host routes to it; outputs `PluginOutput::Log` lines (error / warn / info)
+- `re-emitter` — subscribes to `extraction.document.processed` and republishes the event on `plugin.re_emitted`
+
+**Inputs:** Bus events (via the in-process `MessageBus`), `register_builtin` and `discover_into` calls from `objective` startup, API force-restart / reload requests
+
+**Outputs:** `PluginOutput::Log` lines, `PluginOutput::Publish` envelopes pushed back onto the bus, `PluginOutput::State` key/value updates persisted to disk, plugin status snapshots to the API
+
+**Failure Modes:**
+- Handler error: `consecutive_failures` incremented, `last_error` set, `state` flips to `Error`; next health tick auto-flips back to `Running` once failures reset to zero
+- Handler timeout (configurable, default 5 s): same handling as an error with `plugin handler timeout` as `last_error`
+- Unknown plugin on restart / get: `HostError::UnknownPlugin` (HTTP 404)
+- Duplicate registration: `HostError::DuplicatePlugin` (HTTP 409)
+- State file read/write failure: `HostError::State` surfaced to the API; in-memory state remains authoritative until the next successful flush
 
 ---
 
@@ -508,18 +663,22 @@ models:
 
 | Service | Subscribes To | Publishes To | Reads From | Writes To |
 |---------|--------------|-------------|-----------|----------|
-| Scheduler | API (config) | `scheduler.job.trigger` | Config | Job state |
-| Ingestion | `scheduler.job.trigger` | `ingestion.document.*` | Config, sources | Document Store |
+| Scheduler | API (config) | `scheduler.job.trigger` | Config | Job state (`.objective/state/scheduler.jobstate`) |
+| Ingestion | `scheduler.job.trigger` | `ingestion.document.*` | Source Registry, Config | Document Store |
+| Source Registry | API CRUD | `SourceDefinition` snapshots | `.objective/state/sources.json` | `.objective/state/sources.json` |
 | Document Store | `ingestion.document.received` | `document.stored` | Filesystem | Filesystem |
 | Extraction | `ingestion.document.received` | `extraction.*` | Document Store, Graph | Graph |
 | Embedding | Extraction events | Embedding vectors | Text content | LanceDB |
 | Knowledge Graph | All mutation events | Query results | Kuzu DB | Kuzu DB |
-| Correlation | `extraction.*` | `correlation.*` | Graph | Graph |
+| Correlation | `extraction.*` | `correlation.*` | Graph | Graph, Event Repository |
+| Event Repository | Save/replace calls from Event Engine, API | Event records | `.objective/state/events.json` | `.objective/state/events.json` |
 | Broadcast | `correlation.*`, Scheduler | `broadcast.*` | Graph | Graph, Audio store |
 | Model Runtime | Inference requests | Inference results | Model files | None |
-| Health | All system events | `system.*` | All service probes | Metrics store |
+| Monitoring | Pipeline counter updates | `PipelineMetrics` JSON | Pipeline worker, Scheduler, Retry queue, Snapshot | `.objective/state/monitoring.json` |
+| Recovery | `PipelineMetrics` from Monitoring | `system.heartbeat`, `system.service.crash`, `system.service.recovered` | `.objective/state/recovery.json` | `.objective/state/recovery.json` |
+| Health | All public events | `system.*` aggregate | All service probes | Metrics store |
 | API Gateway | All public events | WebSocket push | All services | None |
-| Plugin Host | Plugin subscriptions | Plugin events | Plugin config | Plugin state |
+| Plugin Host | All bus events, filters by subscription | `PluginOutput::Publish` envelopes | `.objective/plugins/<name>/plugin.json`, `.objective/state/plugins.json` | `.objective/state/plugins.json` |
 
 ## Failure Modes
 

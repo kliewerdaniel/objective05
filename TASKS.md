@@ -44,10 +44,16 @@
   - `[x]` Podcast adapter (RSS with audio metadata, enclosure URL, duration, episode/season tags)
   - `[x]` SEC EDGAR adapter (full-text search API, financial filings)
   - `[x]` GitHub Releases adapter (releases API, tags, authors, assets)
-- `[ ]` Implement model-runtime-backed extraction using local llama.cpp and ONNX.
 - `[x]` Implement event, narrative, contradiction, broadcast, audio, scheduler, plugin host, health, and storage manager services.
   - `[x]` Scheduler service (cron parsing, job definitions, state persistence, event emission)
   - `[x]` Pipeline worker (event-driven ingestion, extraction, event engine correlation, maintenance, and snapshot; background task on startup)
+  - `[x]` Plugin host crate (`objective-plugin-host`) with lifecycle states, manifest discovery, bus event routing, restart/health, persistent state, and `audit-log` + `re-emitter` built-ins.
+- `[ ]` Implement model-runtime-backed extraction using local llama.cpp and ONNX.
+  - `[x]` Design the v1 surface in `docs/processing/model-runtime.md` and `ADR-015`: `ModelRuntime` trait in `objective-core::traits`, `NoopRuntime` provider, `RuntimeExtractionService` orchestrator with per-chunk fallback to the heuristic, and `ModelRuntimeConfig::{Disabled, Heuristic, Local}` on `ObjectiveConfig`. Default `Disabled` preserves v0 behaviour.
+  - `[ ]` Phase 1 — land the trait + orchestrator: `ModelRuntime` / `InferenceTask` / `InferenceResult` / `ModelError` in `objective-core::traits`; `crates/model-runtime` with `NoopRuntime::{heuristic, passthrough}`; `RuntimeExtractionService` in `crates/extraction`; `ObjectiveConfig::model_runtime` plumbing; feature-gated wiring in `crates/objective`; tests for fallback paths and chunk-level error tolerance.
+  - `[ ]` Phase 2 — add `ort` (ONNX Runtime) behind the `onnx` feature; implement `InferenceKind::Embedding`; wire `bge-small-en-v1.5` lookup; attach a `vector_index: ModelIndex` sidecar to `ExtractionResult` for the existing `LanceDB` stub.
+  - `[ ]` Phase 3 — add `llama-cpp-rs` behind the `llama` feature; implement `NER` / `ClaimExtraction` / `RelationExtraction`; ship the default prompt set in `crates/extraction/src/prompts/`; per-task routing via the `default_strategy` block; `POST /api/v1/model-runtime/reload` for hot model load.
+  - `[ ]` Phase 4 — model state machine exposed via `/api/v1/model-runtime`; per-model inference queue (default 4 concurrent); per-model timeout enforcement at the runtime level; latency histograms surfaced through the existing monitoring service.
 
 ## APIs
 
@@ -78,6 +84,11 @@
   - `[x]` `GET /api/v1/export` (JSON download with documents, entity/claim/relationship summaries)
   - `[x]` `GET /api/v1/config` (flattened live configuration; 503 when not attached)
   - `[x]` OpenAPI schemas + tags updated; integration tests cover every new endpoint.
+- `[x]` Implement plugin host routes:
+  - `[x]` `GET /api/v1/plugins` and `GET /api/v1/plugins/:name`
+  - `[x]` `POST /api/v1/plugins/:name/restart` (force restart, increments restart count)
+  - `[x]` `POST /api/v1/plugins/reload` (re-validate the registry)
+  - `[x]` OpenAPI schemas + tag added; integration tests for the 503 fallback, list, get, restart, and reload paths.
 
 ## User Interface
 
@@ -105,10 +116,15 @@
   - `Header` / `Footer` / `Sidebar` — live WebSocket status, uptime
     widget, sync button, and metric ticker.
 - `[x]` Add responsive, accessible component tests and Playwright coverage.
-  - Vitest + React Testing Library + jsdom installed (`vitest.config.ts`,
-    `src/test/setup.ts`).
-  - 18 unit + component tests covering both stores, the Sidebar, and
-    the DetailDrawer.
+  - Vitest + React Testing Library + jsdom installed
+    (`vitest.config.mjs`, `tsconfig.test.json`, `src/test/setup.ts`).
+  - 46 unit + component tests across the API client, both stores, the
+    `useWebSocket` hook, the `Header` and `Sidebar` layout components,
+    and the `DetailDrawer`. Run with `cd dashboard && npm test`;
+    `npm run test:watch` for iterative work; `npm run test:types` to
+    typecheck the test files against `tsconfig.test.json`.
+  - The test suite stubs the API client and WebSocket so no daemon is
+    required to execute it.
   - Playwright end-to-end coverage remains a follow-up; the unit tests
     exercise the same render paths the E2E suite would target.
   - Dashboard builds cleanly: `npm run build` → ~303 kB JS / ~6 kB CSS
@@ -147,7 +163,7 @@
 
 - `[x]` Add minimal runnable implementation notes to README.
 - `[x]` Add minimal configuration example.
-- `[ ]` Update architecture notes as storage and model-runtime implementations replace MVP in-memory components.
+- `[x]` Update architecture notes as storage and model-runtime implementations replace MVP in-memory components.
 - `[x]` Add deployment instructions for packaged binaries and Docker verification.
   - New `docs/deployment/from-source.md` covers prerequisites, local
     development, Docker build/run/verify, and candidate production
@@ -165,4 +181,5 @@
 - The dashboard's `/ws` endpoint bridges the bus to the UI through a polling `WebSocketHub`. The hub uses a 250 ms poll cadence and a 1024-message broadcast channel; clients filter by logical channel (`events`, `broadcast`, `system`). The wire format mirrors `docs/api/internal-api.md`.
 - The `SourceRegistry` is the source of truth for live ingestion adapters. It persists to `.objective/state/sources.json` and seeds `hackernews_front` (hnrss frontpage) and `lobsters` on first boot. Adapter instances are constructed on demand via `SourceRegistry::spawn_adapter`, returning `Box<dyn SourceAdapter>` for heterogeneous dispatch.
 - `AuxiliaryStores` (narrative, broadcast, contradiction) live inside the api-gateway under `routes/auxiliary.rs` rather than in `objective-core`. They are API-only state with no cross-crate consumers, kept behind `Arc<RwLock<HashMap<Ulid, _>>>` and bundled into `ApiState` so they can be replaced with a durable implementation later without touching downstream crates. The `POST /api/v1/broadcasts/generate` endpoint produces a `BroadcastStatus::Draft` record with a stub markdown body; a real generator is left for follow-up.
-- The dashboard is a Vite + React 19 + TypeScript SPA under `dashboard/`. The Vite dev server proxies `/api` and `/ws` to the running Rust daemon on `127.0.0.1:8080`, so the SPA always talks to localhost regardless of where it is served from. The production build emits a static `dist/` bundle (~85 kB gzipped JS, ~2 kB gzipped CSS) that the Rust gateway can serve directly from a packaged build. Tests run with Vitest + React Testing Library + jsdom (18 tests across `uiStore`, `feedStore`, the Sidebar, and the DetailDrawer). Run with `cd dashboard && npm test`; the suite stubs the API client so no daemon is required.
+- The plugin host v1 is fully in-process: built-in plugins are `Arc<dyn Plugin>` objects registered at startup, and discovered manifests under `.objective/plugins/<name>/plugin.json` are mounted as `NoopPlugin` placeholders so they show up in the API and counts. The v1 does not yet spawn external plugin processes or speak the gRPC contract from `docs/api/plugin-api.md`; the API surface and lifecycle states mirror the spec so the upgrade path is mechanical. Built-in plugins shipped today are `audit-log` (records every event the host routes to it) and `re-emitter` (republishes `extraction.document.processed` events onto `plugin.re_emitted`). Both run on the live daemon via the `objective` binary's background task.
+- The dashboard is a Vite + React 19 + TypeScript SPA under `dashboard/`. The Vite dev server proxies `/api` and `/ws` to the running Rust daemon on `127.0.0.1:8080`, so the SPA always talks to localhost regardless of where it is served from. The production build emits a static `dist/` bundle (~85 kB gzipped JS, ~2 kB gzipped CSS) that the Rust gateway can serve directly from a packaged build. Tests run with Vitest + React Testing Library + jsdom (46 tests across the API client, both stores, the `useWebSocket` hook, the `Header` and `Sidebar` layout components, and the `DetailDrawer`). Run with `cd dashboard && npm test`; `npm run test:types` typechecks the test files; the suite stubs the API client and WebSocket so no daemon is required.

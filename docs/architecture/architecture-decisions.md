@@ -258,6 +258,62 @@ How is this decision enforced?
 
 ---
 
+### ADR-013: Plugin Host v1 Is In-Process
+
+**Status:** Accepted (subject to ADR-015 below)
+
+**Context:** `docs/api/plugin-api.md` describes a gRPC-based plugin contract with external plugin processes, but shipping the full gRPC host (proto, server, schema migration, packaging, IPC, crash containment across process boundaries) is a substantial engineering effort that competes with the documented MVP scope (RSS ingestion, heuristic extraction, knowledge graph, broadcast drafts).
+
+**Decision:** Ship the v1 plugin host (`crates/plugin-host`, `objective_plugin_host`) fully in-process. Built-in plugins are `Arc<dyn Plugin>` objects registered at startup via `PluginHost::register_builtin`. Discovered manifests under `.objective/plugins/<name>/plugin.json` are mounted as `NoopPlugin` placeholders so they show up in `/api/v1/plugins` and the lifecycle counts. The gRPC contract from `docs/api/plugin-api.md` is the future upgrade path; the API surface and lifecycle states mirror the spec so the swap is mechanical.
+
+**Consequences:**
+- Easier: V1 ships today with two useful built-ins (`audit-log` recording every event the host routes to it, and `re-emitter` republishing `extraction.document.processed` events on `plugin.re_emitted`); the API, manifests, lifecycle states, persistent state file, and restart counts are all already on the contract
+- Harder: External plugin authors cannot ship executables yet; the only way to extend is to add a Rust crate to the workspace
+- Tradeoff: V1 keeps the user-facing surface stable so the upgrade to out-of-process plugins does not require an API migration; only the host implementation changes
+
+**Compliance:** `PluginHost::register_builtin` is the only registration path; `discover_into` is the only discovery path; `Plugin::handle` returns `PluginOutput::{Log,Publish,State}` which is the superset the future gRPC contract will marshal. The v1 host never spawns child processes and never opens a gRPC socket.
+
+---
+
+### ADR-014: Source Registry Persists to a Single JSON File
+
+**Status:** Accepted
+
+**Context:** The documented MVP exposes a "manage your ingestion sources at runtime" surface so operators can add, update, and remove adapters without restarting the daemon. The store needs to survive restarts and be readable from both the API gateway and the pipeline worker without a separate database engine.
+
+**Decision:** Persist the `SourceRegistry` as a single JSON file at `.objective/state/sources.json`. The store is a `tokio::sync::RwLock<HashMap<String, SourceDefinition>>` with a per-mutation `persist()` call. A new file is written before any in-memory state is updated, but the current implementation does not perform a write-temp-then-rename — the simplicity tradeoff is documented in the source. The store seeds `hackernews_front` (hnrss frontpage) and `lobsters` on first boot.
+
+**Consequences:**
+- Easier: Zero external dependencies, trivial to inspect (`cat .objective/state/sources.json`), trivial to back up, schema-validated by the same `SourceDefinition` type the API uses
+- Harder: Concurrent write throughput is bounded by the JSON serialisation cost; for the documented MVP throughput (handful of CRUD operations) this is fine
+- Tradeoff: A future "lots of sources" or "multi-writer" scenario would migrate to the graph store; the trait boundary on `SourceRegistry` keeps that swap mechanical
+
+**Compliance:** No code path mutates the source set without going through `SourceRegistry::{add,update,remove,trigger}`. The pipeline worker only ever reads through `SourceRegistry::list` / `SourceRegistry::spawn_adapter`.
+
+---
+
+### ADR-015: Model Runtime Integration Is a Trait-First, Phased Delivery
+
+**Status:** Accepted
+
+**Context:** ADR-004 commits to local llama.cpp + ONNX as the inference substrate, and `docs/ai/model-strategy.md` lays out the task-model mapping, the lifecycle, and the resource budget. The extraction crate today ships a single implementation: `HeuristicExtractionService`, a regex-based stub behind the `DocumentProcessor` trait. The MVP ships green without a real model, but the documented roadmap promises a runtime-backed extractor. The question is the shape of the v1 cut: do we land llama.cpp + ONNX now, or do we land the trait surface and phase the native dependencies in behind feature flags?
+
+**Decision:** Land the integration in four phases, each shippable behind a `local-models` Cargo feature so the default build stays small and the C++ toolchain is not required to compile or test the daemon. The full design is in `docs/processing/model-runtime.md`. Summary:
+
+- **Phase 1 (this design)**: define `ModelRuntime` / `InferenceTask` / `InferenceResult` / `ModelError` in `objective-core::traits`; ship `NoopRuntime` in a new `crates/model-runtime`; land `RuntimeExtractionService` in `crates/extraction` with the orchestrator code and a heuristic fallback; add `ModelRuntimeConfig::{Disabled, Heuristic, Local}` to `ObjectiveConfig`; default is `Disabled` (v0 behaviour preserved).
+- **Phase 2**: add the `ort` (ONNX Runtime) dependency behind the `onnx` feature and implement `InferenceKind::Embedding`.
+- **Phase 3**: add the `llama-cpp-rs` dependency behind the `llama` feature and implement `NER` / `ClaimExtraction` / `RelationExtraction`.
+- **Phase 4**: lifecycle, observability, and per-model inference queues.
+
+**Consequences:**
+- Easier: Phase 1 lands the architecture (trait surface, config plumbing, fallback semantics, tests) without the C++ toolchain, so the design can be reviewed and the upgrade to llama.cpp/ONNX is mechanical; the gRPC inference service from `docs/ai/model-strategy.md` is the long-term shape of the same trait, so the upgrade path there is also mechanical
+- Harder: Reviewers have to trust the design rather than see a working end-to-end inference call in the first PR
+- Tradeoff: Same precedent as ADR-013 (in-process plugin host): the long-term gRPC inference service is the upgrade path; the in-process trait is the v1
+
+**Compliance:** Every call site that wants to use a model goes through `Arc<dyn ModelRuntime>`. No call site imports `llama-cpp-rs` or `ort` directly outside of `crates/model-runtime/src/local.rs`. The `DocumentProcessor` trait remains the only thing the pipeline worker depends on; the runtime choice is an `AppState` decision, not a pipeline decision.
+
+---
+
 ## Interfaces
 
 - `architecture-overview.md` — system architecture context
@@ -275,6 +331,6 @@ How is this decision enforced?
 
 ## Future Extensions
 
-- ADR-013: Multi-machine distribution strategy (Phase 3)
-- ADR-014: Peer-to-peer knowledge graph sync protocol
-- ADR-015: Plugin marketplace security model
+- ADR-016: Multi-machine distribution strategy (Phase 3)
+- ADR-017: Peer-to-peer knowledge graph sync protocol
+- ADR-018: Plugin marketplace security model

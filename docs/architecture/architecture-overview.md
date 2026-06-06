@@ -39,7 +39,7 @@ This document covers the high-level architecture, component interactions, data f
 │  │           │  │          │  │  LAYER   │  │                  │   │
 │  │ Sources   │  │ Entities │  │Events    │  │ Reports          │   │
 │  │ Adapters  │  │ Claims   │  │Narratives│  │ Audio            │   │
-│  │ Scheduler │  │ Relations│  │Contradic.│  │ Streaming        │   │
+│  │ Registry  │  │ Relations│  │Contradic.│  │ Streaming        │   │
 │  └─────┬─────┘  └─────┬────┘  └─────┬────┘  └────────┬─────────┘   │
 │        │               │             │                │             │
 │        └───────────────┴─────────────┴────────────────┘             │
@@ -55,6 +55,11 @@ This document covers the high-level architecture, component interactions, data f
 │  │  RUNTIME │  │  SYSTEM  │  │  MANAGER │  │   (Cron/Periodic)│   │
 │  └──────────┘  └──────────┘  └──────────┘  └──────────────────┘   │
 │                                                                     │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐   │
+│  │  PLUGIN  │  │ MONITOR  │  │ RECOVERY │  │   API GATEWAY    │   │
+│  │   HOST   │  │ SERVICE  │  │ SERVICE  │  │  (REST + WS)     │   │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────────────┘   │
+│                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -65,27 +70,45 @@ This document covers the high-level architecture, component interactions, data f
                     │    Scheduler     │
                     │  (cron/periodic) │
                     └────────┬─────────┘
-                             │ triggers
-                             ▼
+                              │ triggers
+                              ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │                     MESSAGE BUS (NATS/RabbitMQ)                   │
-│  Topics: ingestion.*, extraction.*, correlation.*, broadcast.*   │
+│  Topics: ingestion.*, extraction.*, correlation.*, broadcast.*,  │
+│          plugin.*, system.*                                       │
 └─────┬─────────┬──────────┬──────────┬──────────┬────────────────┘
       │         │          │          │          │
       ▼         ▼          ▼          ▼          ▼
 ┌─────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌──────────┐
 │ Source  │ │Entity  │ │Event   │ │Narrative│ │ Broadcast│
 │ Adapter │ │Extract │ │Engine  │ │Engine   │ │ Generator │
-└─────────┘ └────────┘ └────────┘ └────────┘ └──────────┘
-      │         │          │          │          │
-      └─────────┴──────────┴──────────┴──────────┘
-                        │
-                        ▼
-                  ┌──────────┐
-                  │Knowledge │
-                  │  Graph   │
-                  │ (Kuzu)   │
-                  └──────────┘
+└────┬────┘ └────┬───┘ └────┬───┘ └────┬───┘ └────┬─────┘
+     │           │          │          │          │
+     ▼           │          │          │          │
+┌──────────┐     │          │          │          │
+│  Source  │     │          │          │          │
+│ Registry │     │          │          │          │
+└──────────┘     │          │          │          │
+                 └──────────┴──────────┴──────────┘
+                              │
+                              ▼
+                  ┌────────────────────┐
+                  │   Event Repository │
+                  │ (in-memory + file) │
+                  └─────────┬──────────┘
+                            │
+                            ▼
+                  ┌────────────────────┐
+                  │   Knowledge Graph  │
+                  │      (Kuzu)        │
+                  └────────────────────┘
+
+Sidecar:
+┌────────────────┐    ┌────────────────┐    ┌────────────────┐
+│  Plugin Host   │◀──▶│  Health /      │    │  API Gateway   │
+│ (built-ins +   │    │  Monitoring /  │    │  (REST + WS)   │
+│  discovered)   │    │  Recovery      │    │                │
+└────────────────┘    └────────────────┘    └────────────────┘
 ```
 
 ### Data Flow
@@ -146,14 +169,20 @@ This document covers the high-level architecture, component interactions, data f
 | Service | Responsibility | Dependencies |
 |---------|---------------|--------------|
 | Scheduler | Triggers periodic jobs (ingestion, extraction, broadcast) | None |
-| Ingestion Service | Manages source adapters, polls sources, stores raw documents | Scheduler, Message Bus |
-| Extraction Service | Processes raw documents: entity extraction, claim extraction, relationship extraction, event extraction | Message Bus, Knowledge Graph |
-| Correlation Service | Runs event engine, narrative engine, contradiction detection | Knowledge Graph |
+| Ingestion Service | Manages source adapters, polls sources, stores raw documents | Scheduler, Message Bus, Source Registry |
+| Source Registry | Persists user-managed adapter definitions, materialises adapters on demand | Filesystem |
+| Extraction Service | Processes raw documents: entity extraction, claim extraction, relationship extraction, event extraction | Message Bus, Knowledge Graph, Model Runtime |
+| Correlation Service | Runs event engine, narrative engine, contradiction detection | Knowledge Graph, Event Repository |
+| Event Repository | Persists derived `Event` records (in-memory + JSON file implementations) | Filesystem |
 | Broadcast Service | Generates reports, schedules broadcasts, manages audio pipeline | Knowledge Graph, Message Bus |
 | Model Runtime | Manages LLM inference, embedding generation | None (wraps llama.cpp, ONNX, etc.) |
 | Queue System | Durable message passing between services | Storage (for queue persistence) |
 | Storage Manager | Manages knowledge graph backups, snapshots, archiving | Knowledge Graph |
-| Health Service | Monitors all services, restarts on failure, exposes metrics | None |
+| Monitoring Service | Records per-pipeline counters and uptime, exposed via `/api/v1/monitoring` | Message Bus |
+| Recovery Service | Detects stalled / erroring pipelines, publishes crash + recovery + heartbeat events | Monitoring Service, Message Bus |
+| Health Service | Exposes `/api/v1/health` aggregate status and per-service status | All services |
+| Plugin Host | Manages plugin lifecycle, routes bus events to subscribed plugins, persists plugin state | Message Bus, Filesystem |
+| API Gateway | REST + WebSocket, source-registry + plugin CRUD, dashboard asset serving | All services |
 
 ### Event Flow
 
@@ -164,10 +193,11 @@ Event Types:
 
  ingestion.document.received     ── Source adapter received a new document
  ingestion.document.processed    ── Document has been stored
+ extraction.document.processed   ── Document has been extracted (entities/claims/relations)
  extraction.entity.extracted     ── Entity extracted from a document
  extraction.claim.extracted      ── Claim extracted from a document
  extraction.relationship.formed  ── Relationship identified between entities
- correlation.event.created       ── New event formed from claims
+ correlation.event.detected      ── New event formed from claims
  correlation.event.updated       ── Event confidence or scope changed
  correlation.narrative.formed    ── Narrative cluster created
  correlation.narrative.updated   ── Narrative cluster modified
@@ -175,9 +205,11 @@ Event Types:
  broadcast.scheduled             ── Broadcast job scheduled
  broadcast.generated             ── Broadcast content produced
  broadcast.audio.ready           ── Audio file generated
- system.heartbeat                ── Periodic health check
+ plugin.re_emitted               ── Republished event from a built-in plugin
+ system.heartbeat                ── Periodic health check (published by Recovery Service)
  system.service.crash            ── Service failure detected
  system.service.recovered        ── Service restarted
+ scheduler.job.triggered         ── Periodic job fired by the Scheduler Service
 ```
 
 Each event contains:
@@ -243,6 +275,9 @@ Each pipeline stage:
 | Network unavailable (ingestion) | Connection timeout | Skip poll cycle, retry on next schedule |
 | Source adapter failure | Repeated errors | Disable adapter, alert via health service |
 | Broadcast generation failure | Pipeline timeout | Skip broadcast cycle, retry next interval |
+| Pipeline stall | Recovery Service: zero activity + error-rate climb | Publish `system.service.crash`; auto-recover on next healthy check; publish `system.service.recovered` |
+| Plugin handler error / timeout | Plugin Host `consecutive_failures` counter | Force-restart on user demand; built-in `audit-log` records all events; persistent state survives restart |
+| Source removed at runtime | Source Registry CRUD via API | Pipeline worker skips disabled sources on next tick; enabled toggle preserves configuration for re-enable |
 
 If a service is unhealthy:
 1. Health service marks it as degraded
