@@ -10,6 +10,7 @@ use objective_api_gateway::{
         BroadcastRecord, BroadcastStatus, ContradictionRecord, ContradictionStatus,
         NarrativeRecord, NarrativeStatus,
     },
+    server::ModelRuntimeHandle,
     ApiState,
 };
 use objective_core::traits::{DocumentProcessor, DocumentRepository, ExtractionRepository};
@@ -20,6 +21,7 @@ use objective_ingestion::{adapters::StaticSourceAdapter, IngestionService, Sourc
 use objective_message_bus::InMemoryMessageBus;
 use objective_model_runtime::local::LocalModelRuntime;
 use objective_plugin_host::{
+
     audit_log_plugin, re_emitter_plugin, BuiltinPlugin, HostConfig, PluginHost,
 };
 use objective_store::{
@@ -1388,7 +1390,7 @@ async fn test_plugins_reload_returns_registered_plugin_names() {
     assert!(payload["reloaded"].as_u64().unwrap() >= 2);
 }
 
-fn make_model_runtime() -> Arc<tokio::sync::RwLock<LocalModelRuntime>> {
+fn make_model_runtime() -> Arc<ModelRuntimeHandle> {
     use objective_core::traits::InferenceKind as Kind;
     use objective_core::{
         EmbeddingSlot, FallbackStrategy, LlmSlot, LocalModelConfig, ModelSlots, SlotName,
@@ -1435,9 +1437,17 @@ fn make_model_runtime() -> Arc<tokio::sync::RwLock<LocalModelRuntime>> {
         max_concurrency: 1,
         chunk_timeout_ms: 30_000,
     };
-    Arc::new(tokio::sync::RwLock::new(
-        LocalModelRuntime::from_config(config),
-    ))
+    let runtime = LocalModelRuntime::from_config(config.clone());
+    let view = Arc::new(tokio::sync::RwLock::new(runtime));
+    let swappable = Arc::new(tokio::sync::RwLock::new(Arc::new(
+        LocalModelRuntime::from_config(config.clone()),
+    )
+        as Arc<dyn objective_core::traits::ModelRuntime>));
+    Arc::new(ModelRuntimeHandle {
+        swappable,
+        view,
+        config,
+    })
 }
 
 #[tokio::test]
@@ -1532,9 +1542,10 @@ async fn test_model_runtime_reload_returns_reloaded_payload() {
     let payload: Value = serde_json::from_slice(&body_bytes).unwrap();
     assert_eq!(payload["reloaded"], true);
     assert_eq!(payload["strategy_entries"].as_u64().unwrap(), 3);
-    assert!(payload["view"]["provider"].as_str().unwrap() == "local");
-    assert!(payload["note"]
-        .as_str()
-        .unwrap()
-        .contains("Restart the daemon"));
+    assert_eq!(payload["provider"], "local");
+    assert_eq!(payload["view"]["provider"], "local");
+    assert!(
+        payload.get("note").is_none(),
+        "the restart-caveat note was dropped in Phase 3.5a"
+    );
 }

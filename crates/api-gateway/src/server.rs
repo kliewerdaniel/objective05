@@ -41,9 +41,56 @@ pub struct ApiState {
     pub websocket_hub: Option<WebSocketHub>,
     pub source_registry: Option<Arc<SourceRegistry>>,
     pub plugin_host: Option<Arc<PluginHost<InMemoryMessageBus>>>,
-    pub model_runtime: Option<Arc<tokio::sync::RwLock<LocalModelRuntime>>>,
+    /// Live runtime handle (only populated for
+    /// `ModelRuntimeConfig::Local`). Shared with the
+    /// `RuntimeExtractionService` so `POST
+    /// /api/v1/model-runtime/reload` can swap the inner
+    /// `Arc<dyn ModelRuntime>` atomically.
+    pub model_runtime: Option<Arc<ModelRuntimeHandle>>,
     pub auxiliary: AuxiliaryStores,
     pub config: Option<ObjectiveConfig>,
+}
+
+/// Reload-able model runtime handle shared by the
+/// `/api/v1/model-runtime` routes and the live
+/// `RuntimeExtractionService`. Lives here (not in the
+/// `objective` binary) so the api-gateway does not have
+/// to depend on a binary crate.
+pub struct ModelRuntimeHandle {
+    /// Live `Arc<dyn ModelRuntime>`. The
+    /// `RuntimeExtractionService` clones the inner `Arc`
+    /// on every chunk; `POST /reload` takes the write
+    /// lock to perform the swap.
+    pub swappable: Arc<tokio::sync::RwLock<Arc<dyn objective_core::traits::ModelRuntime>>>,
+    /// Snapshot of the current `LocalModelRuntime` for the
+    /// inventory + strategy endpoints. Refreshed by
+    /// [`Self::reload`].
+    pub view: Arc<tokio::sync::RwLock<LocalModelRuntime>>,
+    /// Captured at startup; reload builds a new runtime
+    /// from this.
+    pub config: objective_core::LocalModelConfig,
+}
+
+impl ModelRuntimeHandle {
+    /// Build a new `LocalModelRuntime` from the captured
+    /// config, atomically swap it into the live slot, and
+    /// refresh the view. Returns the new view snapshot.
+    pub async fn reload(&self) -> objective_model_runtime::LocalModelRuntimeView {
+        let new_runtime = LocalModelRuntime::from_config(self.config.clone());
+        let new_arc: Arc<dyn objective_core::traits::ModelRuntime> = Arc::new(new_runtime.clone());
+        {
+            let mut current = self.swappable.write().await;
+            *current = new_arc;
+        }
+        let view = new_runtime.view();
+        *self.view.write().await = new_runtime;
+        view
+    }
+
+    /// Read-only view snapshot.
+    pub async fn snapshot(&self) -> objective_model_runtime::LocalModelRuntimeView {
+        self.view.read().await.view()
+    }
 }
 
 impl ApiState {
@@ -62,6 +109,19 @@ impl ApiState {
             auxiliary: AuxiliaryStores::new(),
             config: None,
         }
+    }
+
+    /// Attach the local model runtime handle so
+    /// `/api/v1/model-runtime` becomes available. The
+    /// `ModelRuntimeHandle` is shared with the
+    /// `RuntimeExtractionService` so a
+    /// `POST /api/v1/model-runtime/reload` can atomically
+    /// swap the live `Arc<dyn ModelRuntime>` without
+    /// rebuilding the API state. If unset, those routes
+    /// respond with 503.
+    pub fn with_model_runtime(mut self, handle: Arc<ModelRuntimeHandle>) -> Self {
+        self.model_runtime = Some(handle);
+        self
     }
 
     pub fn with_started_at(mut self, started_at: chrono::DateTime<chrono::Utc>) -> Self {
@@ -111,20 +171,6 @@ impl ApiState {
     /// If unset, those routes respond with 503.
     pub fn with_plugin_host(mut self, host: Arc<PluginHost<InMemoryMessageBus>>) -> Self {
         self.plugin_host = Some(host);
-        self
-    }
-
-    /// Attach the local model runtime handle so
-    /// `/api/v1/model-runtime` becomes available. The runtime
-    /// sits behind an `Arc<RwLock<_>>` so the
-    /// `POST /api/v1/model-runtime/reload` route can rebuild
-    /// the inner ONNX/llama.cpp providers without re-creating
-    /// the API state. If unset, those routes respond with 503.
-    pub fn with_model_runtime(
-        mut self,
-        runtime: Arc<tokio::sync::RwLock<LocalModelRuntime>>,
-    ) -> Self {
-        self.model_runtime = Some(runtime);
         self
     }
 

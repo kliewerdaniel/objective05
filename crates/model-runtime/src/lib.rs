@@ -18,7 +18,7 @@ pub mod noop;
 pub mod onnx;
 
 pub use llama::LlamaRuntime;
-pub use local::LocalModelRuntime;
+pub use local::{LocalModelRuntime, LocalModelRuntimeView, SlotView, StrategyEntryView};
 pub use noop::{NoopRuntime, NoopStrategy};
 pub use onnx::OnnxRuntime;
 

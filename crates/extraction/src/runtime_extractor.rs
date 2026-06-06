@@ -75,7 +75,16 @@ impl Default for RuntimeExtractionConfig {
 
 #[derive(Clone)]
 pub struct RuntimeExtractionService {
-    runtime: Arc<dyn ModelRuntime>,
+    /// Swappable handle to the live `ModelRuntime`. The
+    /// `Arc<RwLock<Arc<dyn ModelRuntime>>>` indirection lets
+    /// `POST /api/v1/model-runtime/reload` rebuild the
+    /// runtime (e.g. after the operator changes a slot path
+    /// or installs a new GGUF model) and have the next
+    /// request use the new instance without touching the
+    /// processor or restarting the daemon. Phase 3.5 ships
+    /// this swappable path; Phase 3.5b will fill in the
+    /// real `llama-cpp-rs` reload.
+    runtime: Arc<tokio::sync::RwLock<Arc<dyn ModelRuntime>>>,
     fallback: HeuristicExtractionService,
     config: RuntimeExtractionConfig,
 }
@@ -83,7 +92,6 @@ pub struct RuntimeExtractionService {
 impl std::fmt::Debug for RuntimeExtractionService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RuntimeExtractionService")
-            .field("runtime", &self.runtime.provider())
             .field("fallback", &"HeuristicExtractionService")
             .field("config", &self.config)
             .finish()
@@ -91,12 +99,57 @@ impl std::fmt::Debug for RuntimeExtractionService {
 }
 
 impl RuntimeExtractionService {
+    /// Build a service backed by a single, non-swappable
+    /// runtime. Useful for tests and for callers that do not
+    /// expose a hot-reload endpoint.
     pub fn new(runtime: Arc<dyn ModelRuntime>) -> Self {
+        Self {
+            runtime: Arc::new(tokio::sync::RwLock::new(runtime)),
+            fallback: HeuristicExtractionService,
+            config: RuntimeExtractionConfig::default(),
+        }
+    }
+
+    /// Build a service backed by a swappable handle. The
+    /// `Arc<RwLock<Arc<dyn ModelRuntime>>>` is shared with
+    /// the API route, so a `POST
+    /// /api/v1/model-runtime/reload` taking the write lock
+    /// is observed by the next `process` call.
+    pub fn with_swappable_handle(
+        runtime: Arc<tokio::sync::RwLock<Arc<dyn ModelRuntime>>>,
+    ) -> Self {
         Self {
             runtime,
             fallback: HeuristicExtractionService,
             config: RuntimeExtractionConfig::default(),
         }
+    }
+
+    /// Clone of the swappable handle so the API route (or a
+    /// test) can perform an atomic `Arc` swap on the next
+    /// reload without going through this service.
+    pub fn handle(&self) -> Arc<tokio::sync::RwLock<Arc<dyn ModelRuntime>>> {
+        Arc::clone(&self.runtime)
+    }
+
+    /// Replace the live runtime. The new instance is used on
+    /// the next inference call. Returns the previous
+    /// `Arc<dyn ModelRuntime>` so callers (e.g. the API
+    /// route) can drop it explicitly.
+    pub async fn swap_runtime(
+        &self,
+        new: Arc<dyn ModelRuntime>,
+    ) -> Arc<dyn ModelRuntime> {
+        let mut guard = self.runtime.write().await;
+        let previous = std::mem::replace(&mut *guard, new);
+        previous
+    }
+
+    /// Read the current runtime. Cheap clone of the inner
+    /// `Arc`, so callers can keep the snapshot across an
+    /// `await` without holding the lock.
+    async fn current_runtime(&self) -> Arc<dyn ModelRuntime> {
+        Arc::clone(&*self.runtime.read().await)
     }
 
     pub fn with_config(mut self, config: RuntimeExtractionConfig) -> Self {
@@ -135,8 +188,9 @@ impl RuntimeExtractionService {
         };
         let task =
             InferenceTask::new(model, kind, chunk).with_timeout(self.config.chunk_timeout);
+        let runtime = self.current_runtime().await;
 
-        match timeout(self.config.chunk_timeout, self.runtime.infer(task)).await {
+        match timeout(self.config.chunk_timeout, runtime.infer(task)).await {
             Ok(Ok(result)) => Some(result),
             Ok(Err(ModelError::Unavailable { kind })) => {
                 warn!(
@@ -868,5 +922,94 @@ mod tests {
             RuntimeExtractionService::classify_entity_type("Widget"),
             EntityType::Concept
         );
+    }
+
+    #[derive(Debug)]
+    struct MarkedRuntime {
+        label: &'static str,
+    }
+
+    #[async_trait]
+    impl ModelRuntime for MarkedRuntime {
+        fn provider(&self) -> &'static str {
+            self.label
+        }
+        async fn inventory(&self) -> ModelResult<Vec<ModelInfo>> {
+            Ok(Vec::new())
+        }
+        async fn infer(&self, task: InferenceTask) -> ModelResult<InferenceResult> {
+            // Emit a structured claim payload whose `subject`
+            // names the runtime label so the orchestrator's
+            // `decode_claims` path picks it up and the test
+            // can assert on the subject name.
+            let structured = match task.kind {
+                InferenceKind::ClaimExtraction => serde_json::json!({
+                    "claims": [
+                        {
+                            "subject": self.label,
+                            "predicate": "stated",
+                            "object": null,
+                            "text": task.input,
+                            "confidence": 0.9
+                        }
+                    ]
+                }),
+                _ => serde_json::json!({}),
+            };
+            Ok(InferenceResult {
+                text: String::new(),
+                structured: Some(structured),
+                usage: objective_core::traits::TokenUsage::default(),
+                model: task.model,
+                kind: task.kind,
+                elapsed: Duration::from_millis(1),
+                completed_at: chrono::Utc::now(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn process_picks_up_swapped_runtime_mid_flight() {
+        let handle: Arc<tokio::sync::RwLock<Arc<dyn ModelRuntime>>> =
+            Arc::new(tokio::sync::RwLock::new(Arc::new(MarkedRuntime {
+                label: "alpha",
+            })));
+        let service = RuntimeExtractionService::with_swappable_handle(Arc::clone(&handle));
+        let document = make_document("Apple Inc announced.");
+
+        let first = service.process(&document).await.unwrap();
+        assert!(
+            first.claims.iter().any(|c| c.subject_name == "alpha"),
+            "first process should use the alpha runtime; got subjects: {:?}",
+            first.claims.iter().map(|c| &c.subject_name).collect::<Vec<_>>()
+        );
+
+        // Atomically swap the inner runtime.
+        let previous = service
+            .swap_runtime(Arc::new(MarkedRuntime { label: "beta" }))
+            .await;
+        assert_eq!(previous.provider(), "alpha");
+
+        let second = service.process(&document).await.unwrap();
+        assert!(
+            second.claims.iter().any(|c| c.subject_name == "beta"),
+            "second process should use the beta runtime; got subjects: {:?}",
+            second.claims.iter().map(|c| &c.subject_name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn new_and_swappable_handles_are_independent() {
+        let s1 = RuntimeExtractionService::new(Arc::new(MarkedRuntime { label: "alpha" }));
+        let s2 = RuntimeExtractionService::with_swappable_handle(Arc::new(
+            tokio::sync::RwLock::new(Arc::new(MarkedRuntime { label: "beta" })),
+        ));
+        // Both `handle()` clones increment the inner
+        // `Arc<...>` strong count by 1; the `s1`/`s2`
+        // themselves hold one reference each.
+        let s1_handle = s1.handle();
+        let s2_handle = s2.handle();
+        assert!(Arc::strong_count(&s1_handle) >= 1);
+        assert!(Arc::strong_count(&s2_handle) >= 1);
     }
 }

@@ -2,8 +2,7 @@
 //!
 //! - `GET  /api/v1/model-runtime`         — current strategy + slot snapshot
 //! - `POST /api/v1/model-runtime/reload`  — rebuild the inner ONNX/llama.cpp
-//!                                          providers from the captured
-//!                                          `LocalModelConfig`
+//!   providers from the captured `LocalModelConfig`
 //!
 //! Both routes return 503 when no runtime has been attached to the
 //! `ApiState`. Phase 3 builds the inner `LocalModelRuntime` once at
@@ -11,9 +10,8 @@
 //! `Arc<dyn ModelRuntime>` cloned into `RuntimeExtractionService`
 //! still points at the pre-reload instance. The response surfaces
 //! a `note` field so dashboard users know a daemon restart is
-//! required to rewire the live processor. Phase 3.5 will swap the
-//! `Arc<dyn ModelRuntime>` atomically when the `llama-cpp-rs`
-//! session lands.
+//! required to rewire the live processor. Phase 3.5 swaps the
+//! `Arc<dyn ModelRuntime>` atomically.
 
 use std::sync::Arc;
 
@@ -23,12 +21,11 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use objective_model_runtime::{local::LocalModelRuntimeView, LocalModelRuntime};
+use objective_model_runtime::LocalModelRuntimeView;
 use serde::Serialize;
-use tokio::sync::RwLock;
 use utoipa::ToSchema;
 
-use crate::server::ApiState;
+use crate::server::{ApiState, ModelRuntimeHandle};
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ModelRuntimeResponse {
@@ -95,7 +92,7 @@ pub struct ModelRuntimeErrorResponse {
 pub struct ModelRuntimeReloadResponse {
     pub reloaded: bool,
     pub strategy_entries: u32,
-    pub note: String,
+    pub provider: String,
     pub view: ModelRuntimeResponse,
 }
 
@@ -110,9 +107,7 @@ fn unavailable() -> Response {
         .into_response()
 }
 
-fn handle(
-    state: &ApiState,
-) -> Result<Arc<RwLock<LocalModelRuntime>>, Response> {
+fn handle(state: &ApiState) -> Result<Arc<ModelRuntimeHandle>, Response> {
     match state.model_runtime.as_ref() {
         Some(handle) => Ok(Arc::clone(handle)),
         None => Err(unavailable()),
@@ -134,11 +129,18 @@ pub async fn get_model_runtime(State(state): State<ApiState>) -> Response {
         Ok(h) => h,
         Err(resp) => return resp,
     };
-    let view = handle.read().await.view();
+    let view = handle.snapshot().await;
     Json(ModelRuntimeResponse::from(view)).into_response()
 }
 
 /// `POST /api/v1/model-runtime/reload`
+///
+/// Atomically rebuilds the `LocalModelRuntime` from the
+/// captured `LocalModelConfig` and swaps the inner
+/// `Arc<dyn ModelRuntime>` the live
+/// `RuntimeExtractionService` is reading. The next
+/// `process` call picks up the new instance without a
+/// daemon restart. Phase 3.5a.
 #[utoipa::path(
     post,
     path = "/api/v1/model-runtime/reload",
@@ -153,19 +155,13 @@ pub async fn post_model_runtime_reload(State(state): State<ApiState>) -> Respons
         Ok(h) => h,
         Err(resp) => return resp,
     };
-    let view = {
-        let mut guard = handle.write().await;
-        guard.reload();
-        guard.view()
-    };
+    let view = handle.reload().await;
+    let provider = view.provider.clone();
     let strategy_entries = view.strategy.len() as u32;
     Json(ModelRuntimeReloadResponse {
         reloaded: true,
         strategy_entries,
-        note:
-            "Runtime inner state rebuilt; live processor still holds the pre-reload Arc<dyn ModelRuntime>. \
-             Restart the daemon to apply the new strategy to in-flight requests."
-                .to_string(),
+        provider,
         view: ModelRuntimeResponse::from(view),
     })
     .into_response()

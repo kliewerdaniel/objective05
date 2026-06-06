@@ -16,6 +16,8 @@ use objective_ingestion::{
 use objective_message_bus::InMemoryMessageBus;
 use objective_model_runtime::local::LocalModelRuntime;
 use objective_model_runtime::runtime_for;
+use objective_core::traits::ModelRuntime;
+use objective_api_gateway::server::ModelRuntimeHandle;
 use objective_plugin_host::{
     audit_log_plugin, re_emitter_plugin, BuiltinPlugin, HostConfig, PluginHost,
 };
@@ -49,14 +51,15 @@ pub struct AppState {
     pub plugin_host: Arc<PluginHost<InMemoryMessageBus>>,
     pub processor: Arc<dyn DocumentProcessor>,
     pub model_runtime_config: ModelRuntimeConfig,
-    /// Handle to the `LocalModelRuntime` (only populated for
-    /// `ModelRuntimeConfig::Local`). Behind `Arc<RwLock<_>>` so
-    /// the `POST /api/v1/model-runtime/reload` route can
-    /// rebuild the inner ONNX/llama.cpp providers. The
-    /// `processor` above still holds the pre-reload
-    /// `Arc<dyn ModelRuntime>`; a daemon restart is required
-    /// to apply the new strategy to in-flight requests.
-    pub model_runtime_handle: Option<Arc<tokio::sync::RwLock<LocalModelRuntime>>>,
+    /// Handle that backs the `/api/v1/model-runtime` routes.
+    /// Populated only for `ModelRuntimeConfig::Local`. The
+    /// `swappable` inner `Arc<RwLock<Arc<dyn ModelRuntime>>>`
+    /// is shared with `RuntimeExtractionService` so a
+    /// `POST /api/v1/model-runtime/reload` rebuilds and
+    /// atomically swaps the live runtime — the next
+    /// `process` call picks up the new instance without a
+    /// daemon restart.
+    pub model_runtime_handle: Option<Arc<ModelRuntimeHandle>>,
 }
 
 impl AppState {
@@ -188,10 +191,10 @@ impl AppState {
             warn!(?err, "failed to register re-emitter plugin");
         }
 
-        let processor = Self::build_processor(&config.model_runtime)?;
-        let model_runtime_config = config.model_runtime.clone();
         let model_runtime_handle =
             Self::build_model_runtime_handle(&config.model_runtime)?;
+        let processor = Self::build_processor(&config.model_runtime, model_runtime_handle.as_ref())?;
+        let model_runtime_config = config.model_runtime.clone();
 
         Ok(Self {
             store,
@@ -219,9 +222,13 @@ impl AppState {
     ///   no runtime is constructed).
     /// * `Heuristic` / `Local` -> `RuntimeExtractionService`
     ///   backed by the provider returned by
-    ///   `objective_model_runtime::runtime_for`.
+    ///   `objective_model_runtime::runtime_for`. The `Local`
+    ///   branch shares a swappable handle with the API
+    ///   route so `POST /api/v1/model-runtime/reload`
+    ///   rebuilds the live runtime atomically.
     fn build_processor(
         config: &ModelRuntimeConfig,
+        model_runtime_handle: Option<&Arc<ModelRuntimeHandle>>,
     ) -> anyhow::Result<Arc<dyn DocumentProcessor>> {
         match config {
             ModelRuntimeConfig::Disabled => Ok(Arc::new(HeuristicExtractionService)),
@@ -230,11 +237,14 @@ impl AppState {
                 Ok(Arc::new(RuntimeExtractionService::new(runtime)))
             }
             ModelRuntimeConfig::Local(local) => {
-                let runtime = runtime_for(config)?;
+                let handle = model_runtime_handle
+                    .as_ref()
+                    .expect("build_processor(Local) requires a ModelRuntimeHandle");
+                let swappable = Arc::clone(&handle.swappable);
                 let chunk_timeout =
                     Duration::from_millis(local.chunk_timeout_ms.max(1_000));
                 Ok(Arc::new(
-                    RuntimeExtractionService::new(runtime).with_config(
+                    RuntimeExtractionService::with_swappable_handle(swappable).with_config(
                         RuntimeExtractionConfig {
                             chunk_timeout,
                             ..RuntimeExtractionConfig::default()
@@ -252,11 +262,21 @@ impl AppState {
     /// route responds with 503.
     fn build_model_runtime_handle(
         config: &ModelRuntimeConfig,
-    ) -> anyhow::Result<Option<Arc<tokio::sync::RwLock<LocalModelRuntime>>>> {
+    ) -> anyhow::Result<Option<Arc<ModelRuntimeHandle>>> {
         match config {
-            ModelRuntimeConfig::Local(local) => Ok(Some(Arc::new(
-                tokio::sync::RwLock::new(LocalModelRuntime::from_config(local.clone())),
-            ))),
+            ModelRuntimeConfig::Local(local) => {
+                let runtime = LocalModelRuntime::from_config(local.clone());
+                let view = Arc::new(tokio::sync::RwLock::new(runtime));
+                let swappable = Arc::new(tokio::sync::RwLock::new(Arc::new(
+                    LocalModelRuntime::from_config(local.clone()),
+                )
+                    as Arc<dyn ModelRuntime>));
+                Ok(Some(Arc::new(ModelRuntimeHandle {
+                    swappable,
+                    view,
+                    config: local.clone(),
+                })))
+            }
             _ => Ok(None),
         }
     }
