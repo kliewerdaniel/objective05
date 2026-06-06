@@ -9,14 +9,15 @@ use objective_core::ObjectiveConfig;
 use objective_correlation::EventRepository;
 use objective_ingestion::SourceRegistry;
 use objective_message_bus::InMemoryMessageBus;
+use objective_model_runtime::local::LocalModelRuntime;
 use objective_plugin_host::PluginHost;
 use objective_store::{monitoring::MonitoringService, recovery::RecoveryService};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::routes::{
     auxiliary::AuxiliaryStores, broadcasts, claims, config, contradictions, derived_events, docs,
-    documents, entities, events, export, extractions, health, monitoring, narratives, plugins,
-    recovery, search, sources, stats,
+    documents, entities, events, export, extractions, health, model_runtime, monitoring,
+    narratives, plugins, recovery, search, sources, stats,
 };
 use crate::ws::{ws_handler, WebSocketHub};
 
@@ -40,6 +41,7 @@ pub struct ApiState {
     pub websocket_hub: Option<WebSocketHub>,
     pub source_registry: Option<Arc<SourceRegistry>>,
     pub plugin_host: Option<Arc<PluginHost<InMemoryMessageBus>>>,
+    pub model_runtime: Option<Arc<tokio::sync::RwLock<LocalModelRuntime>>>,
     pub auxiliary: AuxiliaryStores,
     pub config: Option<ObjectiveConfig>,
 }
@@ -56,6 +58,7 @@ impl ApiState {
             websocket_hub: None,
             source_registry: None,
             plugin_host: None,
+            model_runtime: None,
             auxiliary: AuxiliaryStores::new(),
             config: None,
         }
@@ -108,6 +111,20 @@ impl ApiState {
     /// If unset, those routes respond with 503.
     pub fn with_plugin_host(mut self, host: Arc<PluginHost<InMemoryMessageBus>>) -> Self {
         self.plugin_host = Some(host);
+        self
+    }
+
+    /// Attach the local model runtime handle so
+    /// `/api/v1/model-runtime` becomes available. The runtime
+    /// sits behind an `Arc<RwLock<_>>` so the
+    /// `POST /api/v1/model-runtime/reload` route can rebuild
+    /// the inner ONNX/llama.cpp providers without re-creating
+    /// the API state. If unset, those routes respond with 503.
+    pub fn with_model_runtime(
+        mut self,
+        runtime: Arc<tokio::sync::RwLock<LocalModelRuntime>>,
+    ) -> Self {
+        self.model_runtime = Some(runtime);
         self
     }
 
@@ -202,6 +219,14 @@ pub fn build_router(state: ApiState) -> Router {
             post(plugins::restart_plugin),
         )
         .route("/api/v1/plugins/reload", post(plugins::reload_plugins))
+        .route(
+            "/api/v1/model-runtime",
+            get(model_runtime::get_model_runtime),
+        )
+        .route(
+            "/api/v1/model-runtime/reload",
+            post(model_runtime::post_model_runtime_reload),
+        )
         .route("/api-docs/openapi.json", get(docs::get_openapi_spec))
         .with_state(state.clone());
 

@@ -1243,6 +1243,7 @@ dependencies = [
  "objective-extraction",
  "objective-ingestion",
  "objective-message-bus",
+ "objective-model-runtime",
  "objective-plugin-host",
  "objective-store",
  "serde",
@@ -1299,12 +1300,14 @@ dependencies = [
  "objective-core",
  "objective-model-runtime",
  "regex",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
  "ulid",
+ "utoipa",
 ]
 
 [[package]]
@@ -1349,6 +1352,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "objective-core",
+ "serde",
  "serde_json",
  "thiserror 1.0.69",
  "tokio",

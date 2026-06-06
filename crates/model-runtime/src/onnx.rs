@@ -47,6 +47,11 @@ impl OnnxRuntime {
         Self::from_slots(&config.models)
     }
 
+    /// True when an embedding slot is configured.
+    pub fn has_slot(&self) -> bool {
+        self.embedding.is_some()
+    }
+
     /// True when the `onnx` Cargo feature is enabled. Phase
     /// 2.5 will use this to dispatch between the deterministic
     /// stub and a real `ort::Session`. Phase 2 always returns
@@ -168,6 +173,7 @@ mod tests {
     async fn inventory_reports_embedding_slot() {
         let runtime = OnnxRuntime::from_slots(&ModelSlots {
             embedding: Some(slot()),
+            extraction_llm: None,
         });
         let inv = runtime.inventory().await.unwrap();
         assert_eq!(inv.len(), 1);
@@ -186,6 +192,7 @@ mod tests {
     async fn non_embedding_kinds_are_unavailable() {
         let runtime = OnnxRuntime::from_slots(&ModelSlots {
             embedding: Some(slot()),
+            extraction_llm: None,
         });
         let task = InferenceTask::new(
             ModelId::Mistral7BInstruct,
@@ -212,6 +219,7 @@ mod tests {
     async fn deterministic_embedding_matches_dimension() {
         let runtime = OnnxRuntime::from_slots(&ModelSlots {
             embedding: Some(slot()),
+            extraction_llm: None,
         });
         let task = InferenceTask::new(
             ModelId::BgeSmallEnV15,
@@ -230,6 +238,7 @@ mod tests {
     async fn same_input_yields_same_embedding() {
         let runtime = OnnxRuntime::from_slots(&ModelSlots {
             embedding: Some(slot()),
+            extraction_llm: None,
         });
         let task = InferenceTask::new(
             ModelId::BgeSmallEnV15,

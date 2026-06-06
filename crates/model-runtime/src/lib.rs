@@ -12,9 +12,13 @@
 //! See `docs/processing/model-runtime.md` and ADR-015 for the
 //! phasing plan.
 
+pub mod llama;
+pub mod local;
 pub mod noop;
 pub mod onnx;
 
+pub use llama::LlamaRuntime;
+pub use local::LocalModelRuntime;
 pub use noop::{NoopRuntime, NoopStrategy};
 pub use onnx::OnnxRuntime;
 
@@ -37,11 +41,10 @@ pub fn default_runtime() -> Arc<dyn ModelRuntime> {
 ///   `HeuristicExtractionService` directly).
 /// * `Heuristic` -> `NoopRuntime::heuristic()` (exercises the
 ///   per-chunk fallback path).
-/// * `Local` -> `OnnxRuntime` (Phase 2). Embedding-only; non-
-///   embedding kinds report `Unavailable` and the orchestrator
-///   falls back. When no embedding slot is configured the
-///   runtime returns `InvalidConfig` on the first embedding
-///   call and the orchestrator falls back.
+/// * `Local` -> `LocalModelRuntime` (Phase 3). The
+///   composite runtime fronts `OnnxRuntime` for embedding
+///   and `LlamaRuntime` for the LLM kinds, dispatched
+///   through `LocalModelConfig::default_strategy`.
 pub fn runtime_for(
     config: &objective_core::ModelRuntimeConfig,
 ) -> Result<Arc<dyn ModelRuntime>, objective_core::ObjectiveError> {
@@ -55,7 +58,7 @@ pub fn runtime_for(
         }
         objective_core::ModelRuntimeConfig::Heuristic => Ok(Arc::new(NoopRuntime::heuristic())),
         objective_core::ModelRuntimeConfig::Local(local) => {
-            Ok(Arc::new(OnnxRuntime::from_config(local)))
+            Ok(Arc::new(LocalModelRuntime::from_config(local.clone())))
         }
     }
 }
@@ -75,7 +78,7 @@ pub fn inventory(_runtime: &Arc<dyn ModelRuntime>) -> Vec<ModelInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use objective_core::{LocalModelConfig, ModelRuntimeConfig, ModelSlots};
+    use objective_core::{LocalModelConfig, ModelRuntimeConfig, ModelSlots, StrategyTable};
 
     #[test]
     fn runtime_for_disabled_returns_error() {
@@ -90,15 +93,16 @@ mod tests {
     }
 
     #[test]
-    fn runtime_for_local_returns_onnx() {
+    fn runtime_for_local_returns_local_composite() {
         let local = ModelRuntimeConfig::Local(LocalModelConfig {
             models: ModelSlots::default(),
+            default_strategy: StrategyTable::default(),
             context_window: 4096,
             max_concurrency: 1,
             chunk_timeout_ms: 30_000,
         });
         let runtime = runtime_for(&local).unwrap();
-        assert_eq!(runtime.provider(), "onnx");
+        assert_eq!(runtime.provider(), "local");
     }
 
     #[tokio::test]

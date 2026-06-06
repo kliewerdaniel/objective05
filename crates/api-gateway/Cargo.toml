@@ -13,6 +13,7 @@ objective-core = { path = "../core" }
 objective-correlation = { path = "../correlation" }
 objective-ingestion = { path = "../ingestion" }
 objective-message-bus = { path = "../message-bus" }
+objective-model-runtime = { path = "../model-runtime" }
 objective-plugin-host = { path = "../plugin-host" }
 objective-store = { path = "../store" }
 serde.workspace = true

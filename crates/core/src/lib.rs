@@ -5,7 +5,7 @@ pub mod traits;
 pub mod types;
 
 pub use config::{
-    ApiConfig, EmbeddingSlot, LocalModelConfig, ModelRuntimeConfig, ModelSlots, ObjectiveConfig,
-    StorageConfig,
+    ApiConfig, EmbeddingSlot, FallbackStrategy, LlmSlot, LocalModelConfig, ModelRuntimeConfig,
+    ModelSlots, ObjectiveConfig, SlotName, StorageConfig, StrategyEntry, StrategyTable,
 };
 pub use error::{ObjectiveError, Result};

@@ -11,6 +11,7 @@ pub mod events;
 pub mod export;
 pub mod extractions;
 pub mod health;
+pub mod model_runtime;
 pub mod monitoring;
 pub mod narratives;
 pub mod plugins;

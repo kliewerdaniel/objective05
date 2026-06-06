@@ -46,9 +46,16 @@ pub enum ModelRuntimeConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LocalModelConfig {
     /// Model slots. Phase 2 ships the `embedding` slot (ONNX);
-    /// Phase 3 will add `extraction_llm` (llama.cpp).
+    /// Phase 3 adds `extraction_llm` (llama.cpp).
     #[serde(default)]
     pub models: ModelSlots,
+    /// Per-kind routing table. Maps each `InferenceKind` to
+    /// the slot that should handle it and the fallback
+    /// strategy on a per-chunk error. Empty by default — the
+    /// orchestrator falls back to the heuristic provider for
+    /// every kind until the operator adds entries.
+    #[serde(default)]
+    pub default_strategy: StrategyTable,
     /// Context window in tokens. Defaults to 4096.
     #[serde(default = "default_context_window")]
     pub context_window: u32,
@@ -64,6 +71,8 @@ pub struct LocalModelConfig {
 pub struct ModelSlots {
     /// ONNX-backed embedding slot. Phase 2 only.
     pub embedding: Option<EmbeddingSlot>,
+    /// llama.cpp-backed extraction LLM slot. Phase 3 only.
+    pub extraction_llm: Option<LlmSlot>,
 }
 
 /// One named ONNX embedding model. The `dimension` is asserted
@@ -75,6 +84,66 @@ pub struct EmbeddingSlot {
     pub path: PathBuf,
     pub dimension: u32,
 }
+
+/// One named llama.cpp LLM slot. The `context_tokens` field
+/// documents the model's advertised context window; the
+/// runtime enforces it at chunking time.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LlmSlot {
+    pub path: PathBuf,
+    pub context_tokens: u32,
+    /// Optional number of layers to offload to GPU. The
+    /// stub `LlamaRuntime` ignores it; Phase 3.5 will use it
+    /// when wiring the real `llama-cpp-rs` session.
+    #[serde(default)]
+    pub gpu_layers: Option<u32>,
+}
+
+/// Per-kind routing entry. The slot name is looked up
+/// against `ModelSlots` at runtime; the fallback describes
+/// what to do when the call fails.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StrategyEntry {
+    pub slot: SlotName,
+    #[serde(default)]
+    pub fallback: FallbackStrategy,
+}
+
+/// Name of a configured slot. Phase 3 ships two variants;
+/// future phases will add `Remote(name)` and `Plugin(name)`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SlotName {
+    Embedding,
+    ExtractionLlm,
+    Custom(String),
+}
+
+impl SlotName {
+    pub fn as_str(&self) -> &str {
+        match self {
+            SlotName::Embedding => "embedding",
+            SlotName::ExtractionLlm => "extraction_llm",
+            SlotName::Custom(name) => name.as_str(),
+        }
+    }
+}
+
+/// Fallback policy when the configured slot returns
+/// `Unavailable` or `Backend`. `Heuristic` routes the
+/// affected chunk through the heuristic provider; `None`
+/// skips the chunk entirely.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FallbackStrategy {
+    #[default]
+    Heuristic,
+    None,
+}
+
+/// `InferenceKind` -> `StrategyEntry`. Stored as a
+/// `BTreeMap` so the YAML form is stable and diffable.
+pub type StrategyTable = std::collections::BTreeMap<crate::traits::InferenceKind, StrategyEntry>;
 
 fn default_context_window() -> u32 {
     4096
@@ -117,10 +186,20 @@ impl std::fmt::Display for ModelRuntimeConfig {
                 } else {
                     "off"
                 };
+                let llm = if cfg.models.extraction_llm.is_some() {
+                    "on"
+                } else {
+                    "off"
+                };
                 write!(
                     f,
-                    "local({}ms, ctx={}, conc={}, embed={})",
-                    cfg.chunk_timeout_ms, cfg.context_window, cfg.max_concurrency, embedding
+                    "local({}ms, ctx={}, conc={}, embed={}, llm={}, strategy={})",
+                    cfg.chunk_timeout_ms,
+                    cfg.context_window,
+                    cfg.max_concurrency,
+                    embedding,
+                    llm,
+                    cfg.default_strategy.len()
                 )
             }
         }
@@ -236,6 +315,7 @@ mod tests {
         assert!(ModelRuntimeConfig::Heuristic.requires_runtime());
         let local = ModelRuntimeConfig::Local(LocalModelConfig {
             models: ModelSlots::default(),
+            default_strategy: StrategyTable::default(),
             context_window: 4096,
             max_concurrency: 1,
             chunk_timeout_ms: 30_000,
@@ -250,6 +330,7 @@ mod tests {
 
         let local = ModelRuntimeConfig::Local(LocalModelConfig {
             models: ModelSlots::default(),
+            default_strategy: StrategyTable::default(),
             context_window: 4096,
             max_concurrency: 2,
             chunk_timeout_ms: 5_000,
@@ -267,12 +348,13 @@ mod tests {
         assert_eq!(
             ModelRuntimeConfig::Local(LocalModelConfig {
                 models: ModelSlots::default(),
+                default_strategy: StrategyTable::default(),
                 context_window: 4096,
                 max_concurrency: 1,
                 chunk_timeout_ms: 5_000,
             })
             .to_string(),
-            "local(5000ms, ctx=4096, conc=1, embed=off)"
+            "local(5000ms, ctx=4096, conc=1, embed=off, llm=off, strategy=0)"
         );
         assert_eq!(
             ModelRuntimeConfig::Local(LocalModelConfig {
@@ -281,14 +363,44 @@ mod tests {
                         path: PathBuf::from(".objective/models/bge-small-en-v1.5/model.onnx"),
                         dimension: 384,
                     }),
+                    extraction_llm: Some(LlmSlot {
+                        path: PathBuf::from(".objective/models/mistral-7b-instruct-v0.3.Q4_K_M.gguf"),
+                        context_tokens: 8_192,
+                        gpu_layers: Some(32),
+                    }),
                 },
+                default_strategy: StrategyTable::default(),
                 context_window: 4096,
                 max_concurrency: 1,
                 chunk_timeout_ms: 5_000,
             })
             .to_string(),
-            "local(5000ms, ctx=4096, conc=1, embed=on)"
+            "local(5000ms, ctx=4096, conc=1, embed=on, llm=on, strategy=0)"
         );
+    }
+
+    #[test]
+    fn strategy_table_round_trips_through_yaml() {
+        use crate::traits::InferenceKind;
+        let yaml = r#"
+named_entity_recognition:
+  slot: extraction_llm
+  fallback: heuristic
+claim_extraction:
+  slot: extraction_llm
+  fallback: heuristic
+embedding:
+  slot: embedding
+  fallback: none
+"#;
+        let table: StrategyTable = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(table.len(), 3);
+        let ner = table.get(&InferenceKind::NamedEntityRecognition).unwrap();
+        assert_eq!(ner.slot, SlotName::ExtractionLlm);
+        assert_eq!(ner.fallback, FallbackStrategy::Heuristic);
+        let embed = table.get(&InferenceKind::Embedding).unwrap();
+        assert_eq!(embed.slot, SlotName::Embedding);
+        assert_eq!(embed.fallback, FallbackStrategy::None);
     }
 
     #[test]

@@ -37,7 +37,10 @@ use objective_core::{
         DocumentProcessor, InferenceKind, InferenceResult, InferenceTask, ModelError, ModelId,
         ModelRuntime,
     },
-    types::{ExtractedClaim, ExtractionResult, ModelIndex, ModelVector, RawDocument},
+    types::{
+        EntityType, ExtractedClaim, ExtractedEntity, ExtractedRelationship, ExtractionResult,
+        ModelIndex, ModelVector, RawDocument,
+    },
     Result,
 };
 use tokio::time::timeout;
@@ -195,6 +198,146 @@ impl RuntimeExtractionService {
         })
     }
 
+    /// Decode a `{"entities": [...]}` JSON payload into a
+    /// list of `ExtractedEntity`. Unknown `type` strings map
+    /// to `EntityType::Concept`; missing fields are skipped
+    /// without erroring so a partial decode still yields a
+    /// useful result.
+    fn decode_entities(
+        structured: &serde_json::Value,
+        chunk: &str,
+    ) -> Vec<ExtractedEntity> {
+        let Some(entities) = structured.get("entities").and_then(|v| v.as_array()) else {
+            return Vec::new();
+        };
+        entities
+            .iter()
+            .filter_map(|value| {
+                let name = value.get("name")?.as_str()?.to_string();
+                if name.is_empty() {
+                    return None;
+                }
+                let entity_type = value
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .map(Self::classify_entity_type)
+                    .unwrap_or(EntityType::Concept);
+                let confidence = value
+                    .get("confidence")
+                    .and_then(|v| v.as_f64())
+                    .map(|f| f as f32)
+                    .unwrap_or(0.5);
+                Some(ExtractedEntity {
+                    evidence_snippet: chunk.to_string(),
+                    name,
+                    entity_type,
+                    aliases: Vec::new(),
+                    description: None,
+                    metadata: std::collections::HashMap::new(),
+                    confidence,
+                })
+            })
+            .collect()
+    }
+
+    fn classify_entity_type(label: &str) -> EntityType {
+        match label {
+            "Organization" | "Org" | "Company" | "Corporation" => EntityType::Organization,
+            "Location" | "Place" | "City" | "Country" | "State" => EntityType::Location,
+            "Person" | "People" | "Human" => EntityType::Person,
+            "Event" | "EventTopic" => EntityType::EventTopic,
+            "Product" => EntityType::Concept,
+            _ => EntityType::Concept,
+        }
+    }
+
+    /// Decode a `{"claims": [...]}` JSON payload into a list
+    /// of `ExtractedClaim`. Mirrors the v0 heuristic schema
+    /// so downstream code does not need to branch on provider.
+    fn decode_claims(
+        structured: &serde_json::Value,
+        chunk: &str,
+    ) -> Vec<ExtractedClaim> {
+        let Some(claims) = structured.get("claims").and_then(|v| v.as_array()) else {
+            return Vec::new();
+        };
+        claims
+            .iter()
+            .filter_map(|value| {
+                let text = value
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| chunk.to_string());
+                let subject = value
+                    .get("subject")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| "unknown".to_string());
+                let predicate = value
+                    .get("predicate")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| "related_to".to_string());
+                let object = value
+                    .get("object")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let confidence = value
+                    .get("confidence")
+                    .and_then(|v| v.as_f64())
+                    .map(|f| f as f32)
+                    .unwrap_or(0.5);
+                Some(ExtractedClaim {
+                    claim_text: text,
+                    subject_name: subject,
+                    predicate,
+                    object_name: object,
+                    object_value: None,
+                    claim_type: objective_core::types::ClaimType::Relation,
+                    sentiment: None,
+                    confidence,
+                    evidence_snippet: chunk.to_string(),
+                    attributed_to: Some("model-runtime".to_string()),
+                })
+            })
+            .collect()
+    }
+
+    /// Decode a `{"relationships": [...]}` JSON payload into a
+    /// list of `ExtractedRelationship`.
+    fn decode_relationships(
+        structured: &serde_json::Value,
+        chunk: &str,
+    ) -> Vec<ExtractedRelationship> {
+        let Some(rels) = structured.get("relationships").and_then(|v| v.as_array()) else {
+            return Vec::new();
+        };
+        rels.iter()
+            .filter_map(|value| {
+                let from = value.get("from")?.as_str()?.to_string();
+                let to = value.get("to")?.as_str()?.to_string();
+                let rel_type = value
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| "related_to".to_string());
+                let confidence = value
+                    .get("confidence")
+                    .and_then(|v| v.as_f64())
+                    .map(|f| f as f32)
+                    .unwrap_or(0.5);
+                Some(ExtractedRelationship {
+                    from_entity_name: from,
+                    to_entity_name: to,
+                    relationship_type: rel_type,
+                    confidence,
+                    evidence_snippet: chunk.to_string(),
+                })
+            })
+            .collect()
+    }
+
     /// Decode an `InferenceResult` from an `Embedding` call
     /// into a `ModelVector` and append it to the sidecar.
     /// Returns `true` if the vector was appended. The sidecar's
@@ -242,26 +385,45 @@ impl DocumentProcessor for RuntimeExtractionService {
             return Ok(baseline);
         }
 
+        let mut runtime_entities: Vec<ExtractedEntity> = Vec::new();
         let mut runtime_claims: Vec<ExtractedClaim> = Vec::new();
-        let mut fallback_claims: Vec<ExtractedClaim> = Vec::new();
+        let mut runtime_relationships: Vec<ExtractedRelationship> = Vec::new();
         let mut vector_index = ModelIndex::new("embeddings", ModelId::BgeSmallEnV15, 0);
 
         for (index, chunk) in chunks.iter().enumerate() {
-            match self
+            if let Some(result) = self
+                .infer_kind(InferenceKind::NamedEntityRecognition, chunk, index, &document_id)
+                .await
+            {
+                if let Some(structured) = result.structured {
+                    runtime_entities.extend(Self::decode_entities(&structured, chunk));
+                }
+            }
+
+            if let Some(result) = self
                 .infer_kind(InferenceKind::ClaimExtraction, chunk, index, &document_id)
                 .await
             {
-                Some(result) => {
-                    if let Some(claim) = self.runtime_text_to_claim(&result.text, chunk) {
-                        runtime_claims.push(claim);
-                    } else if let Some(claim) = baseline.claims.get(index) {
-                        fallback_claims.push(claim.clone());
+                if let Some(structured) = result.structured {
+                    let decoded = Self::decode_claims(&structured, chunk);
+                    if decoded.is_empty() {
+                        if let Some(claim) = self.runtime_text_to_claim(&result.text, chunk) {
+                            runtime_claims.push(claim);
+                        }
+                    } else {
+                        runtime_claims.extend(decoded);
                     }
+                } else if let Some(claim) = self.runtime_text_to_claim(&result.text, chunk) {
+                    runtime_claims.push(claim);
                 }
-                None => {
-                    if let Some(claim) = baseline.claims.get(index) {
-                        fallback_claims.push(claim.clone());
-                    }
+            }
+
+            if let Some(result) = self
+                .infer_kind(InferenceKind::RelationExtraction, chunk, index, &document_id)
+                .await
+            {
+                if let Some(structured) = result.structured {
+                    runtime_relationships.extend(Self::decode_relationships(&structured, chunk));
                 }
             }
 
@@ -273,8 +435,14 @@ impl DocumentProcessor for RuntimeExtractionService {
             }
         }
 
-        let mut merged = runtime_claims;
-        merged.extend(fallback_claims);
+        let mut merged_entities = runtime_entities;
+        merged_entities.extend(baseline.entities);
+
+        let mut merged_claims = runtime_claims;
+        merged_claims.extend(baseline.claims);
+
+        let mut merged_relationships = runtime_relationships;
+        merged_relationships.extend(baseline.relationships);
 
         let vector_index = if vector_index.is_empty() {
             None
@@ -284,9 +452,9 @@ impl DocumentProcessor for RuntimeExtractionService {
 
         Ok(ExtractionResult {
             document_id: baseline.document_id,
-            entities: baseline.entities,
-            claims: merged,
-            relationships: baseline.relationships,
+            entities: merged_entities,
+            claims: merged_claims,
+            relationships: merged_relationships,
             vector_index,
         })
     }
@@ -562,5 +730,143 @@ mod tests {
 
         assert!(result.claims.is_empty());
         assert!(result.vector_index.is_none());
+    }
+
+    /// Always returns a `structured` JSON payload for the LLM
+    /// kinds. Exercises the JSON decoding helpers in
+    /// `RuntimeExtractionService::{decode_entities,
+    /// decode_claims, decode_relationships}`.
+    #[derive(Debug)]
+    struct JsonEmittingRuntime;
+
+    #[async_trait]
+    impl ModelRuntime for JsonEmittingRuntime {
+        fn provider(&self) -> &'static str {
+            "json-emitting"
+        }
+
+        async fn inventory(&self) -> ModelResult<Vec<ModelInfo>> {
+            Ok(Vec::new())
+        }
+
+        async fn infer(&self, task: InferenceTask) -> ModelResult<InferenceResult> {
+            let structured = match task.kind {
+                InferenceKind::NamedEntityRecognition => serde_json::json!({
+                    "entities": [
+                        {"name": "Apple Inc", "type": "Organization", "confidence": 0.92},
+                        {"name": "Austin", "type": "Location", "confidence": 0.88}
+                    ]
+                }),
+                InferenceKind::ClaimExtraction => serde_json::json!({
+                    "claims": [
+                        {
+                            "subject": "Apple Inc",
+                            "predicate": "announced",
+                            "object": "expansion",
+                            "text": task.input,
+                            "confidence": 0.81
+                        }
+                    ]
+                }),
+                InferenceKind::RelationExtraction => serde_json::json!({
+                    "relationships": [
+                        {
+                            "from": "Apple Inc",
+                            "type": "located_in",
+                            "to": "Austin",
+                            "confidence": 0.75
+                        }
+                    ]
+                }),
+                InferenceKind::Embedding => {
+                    let vector: Vec<f32> = (0..4).map(|i| (i as f32) / 4.0).collect();
+                    return Ok(InferenceResult::embedding(
+                        task.model,
+                        4,
+                        vector,
+                        Duration::from_millis(1),
+                    ));
+                }
+                _ => serde_json::json!({}),
+            };
+            Ok(InferenceResult {
+                text: String::new(),
+                structured: Some(structured),
+                usage: objective_core::traits::TokenUsage::default(),
+                model: task.model,
+                kind: task.kind,
+                elapsed: Duration::from_millis(1),
+                completed_at: chrono::Utc::now(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn process_decodes_ner_payload_into_runtime_entities() {
+        let runtime: Arc<dyn ModelRuntime> = Arc::new(JsonEmittingRuntime);
+        let service = RuntimeExtractionService::new(runtime);
+        let document = make_document(
+            "Apple Inc announced a 10% expansion in Austin. Analysts reported hiring.",
+        );
+
+        let result = service.process(&document).await.unwrap();
+
+        let runtime_entities: Vec<&ExtractedEntity> = result
+            .entities
+            .iter()
+            .filter(|entity| entity.confidence > 0.7)
+            .collect();
+        let names: Vec<&str> = runtime_entities
+            .iter()
+            .map(|e| e.name.as_str())
+            .collect();
+        assert!(names.contains(&"Apple Inc"));
+        assert!(names.contains(&"Austin"));
+        assert!(result
+            .entities
+            .iter()
+            .any(|e| e.entity_type == EntityType::Organization));
+        assert!(result
+            .entities
+            .iter()
+            .any(|e| e.entity_type == EntityType::Location));
+    }
+
+    #[tokio::test]
+    async fn process_decodes_relation_payload_into_runtime_relationships() {
+        let runtime: Arc<dyn ModelRuntime> = Arc::new(JsonEmittingRuntime);
+        let service = RuntimeExtractionService::new(runtime);
+        let document = make_document(
+            "Apple Inc announced a 10% expansion in Austin. Analysts reported hiring.",
+        );
+
+        let result = service.process(&document).await.unwrap();
+
+        assert!(result
+            .relationships
+            .iter()
+            .any(|r| r.from_entity_name == "Apple Inc"
+                && r.to_entity_name == "Austin"
+                && r.relationship_type == "located_in"));
+    }
+
+    #[test]
+    fn classify_entity_type_handles_known_and_unknown_labels() {
+        assert_eq!(
+            RuntimeExtractionService::classify_entity_type("Person"),
+            EntityType::Person
+        );
+        assert_eq!(
+            RuntimeExtractionService::classify_entity_type("Org"),
+            EntityType::Organization
+        );
+        assert_eq!(
+            RuntimeExtractionService::classify_entity_type("Event"),
+            EntityType::EventTopic
+        );
+        assert_eq!(
+            RuntimeExtractionService::classify_entity_type("Widget"),
+            EntityType::Concept
+        );
     }
 }

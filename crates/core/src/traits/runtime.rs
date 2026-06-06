@@ -53,7 +53,8 @@ impl ModelId {
 /// [`ModelError::UnsupportedKind`] when it sees a kind it does
 /// not recognise, which the orchestrator translates into a
 /// per-chunk fallback to the heuristic provider.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum InferenceKind {
     NamedEntityRecognition,
     ClaimExtraction,

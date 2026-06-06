@@ -28,6 +28,10 @@ use crate::routes::{
     },
     extractions::ExtractionsResponse,
     health::{HealthResponse, ServiceHealth},
+    model_runtime::{
+        ModelRuntimeErrorResponse, ModelRuntimeReloadResponse, ModelRuntimeResponse, SlotSummary,
+        StrategyRow,
+    },
     monitoring::MonitoringResponse,
     narratives::{Narrative, NarrativeDetailResponse, NarrativeError, NarrativesResponse},
     plugins::{
@@ -95,6 +99,8 @@ use crate::routes::{
         crate::routes::plugins::get_plugin,
         crate::routes::plugins::restart_plugin,
         crate::routes::plugins::reload_plugins,
+        crate::routes::model_runtime::get_model_runtime,
+        crate::routes::model_runtime::post_model_runtime_reload,
     ),
     components(
         schemas(
@@ -165,6 +171,11 @@ use crate::routes::{
             PluginsListResponse,
             PluginErrorResponse,
             PluginReloadResponse,
+            ModelRuntimeResponse,
+            ModelRuntimeReloadResponse,
+            ModelRuntimeErrorResponse,
+            SlotSummary,
+            StrategyRow,
             RecoveryResponse,
             RecoveryCheckResponse,
             RecoveryErrorBody,
@@ -207,6 +218,7 @@ use crate::routes::{
         (name = "search", description = "Substring search across documents, entities, and claims."),
         (name = "config", description = "Active configuration of the running gateway."),
         (name = "plugins", description = "Plugin host: list, inspect, restart, and reload registered plugins."),
+        (name = "model-runtime", description = "Model runtime strategy table, slot configuration, and hot reload."),
         (name = "recovery", description = "Pipeline health, crash detection, and recovery state."),
     )
 )]

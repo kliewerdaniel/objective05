@@ -18,6 +18,7 @@ use objective_correlation::{EventEngine, InMemoryEventRepository};
 use objective_extraction::HeuristicExtractionService;
 use objective_ingestion::{adapters::StaticSourceAdapter, IngestionService, SourceRegistry};
 use objective_message_bus::InMemoryMessageBus;
+use objective_model_runtime::local::LocalModelRuntime;
 use objective_plugin_host::{
     audit_log_plugin, re_emitter_plugin, BuiltinPlugin, HostConfig, PluginHost,
 };
@@ -1385,4 +1386,155 @@ async fn test_plugins_reload_returns_registered_plugin_names() {
     let body_bytes = to_bytes(response.into_body(), 4096).await.unwrap();
     let payload: Value = serde_json::from_slice(&body_bytes).unwrap();
     assert!(payload["reloaded"].as_u64().unwrap() >= 2);
+}
+
+fn make_model_runtime() -> Arc<tokio::sync::RwLock<LocalModelRuntime>> {
+    use objective_core::traits::InferenceKind as Kind;
+    use objective_core::{
+        EmbeddingSlot, FallbackStrategy, LlmSlot, LocalModelConfig, ModelSlots, SlotName,
+        StrategyEntry, StrategyTable,
+    };
+    use std::path::PathBuf;
+
+    let mut strategy = StrategyTable::default();
+    strategy.insert(
+        Kind::NamedEntityRecognition,
+        StrategyEntry {
+            slot: SlotName::ExtractionLlm,
+            fallback: FallbackStrategy::Heuristic,
+        },
+    );
+    strategy.insert(
+        Kind::ClaimExtraction,
+        StrategyEntry {
+            slot: SlotName::ExtractionLlm,
+            fallback: FallbackStrategy::Heuristic,
+        },
+    );
+    strategy.insert(
+        Kind::Embedding,
+        StrategyEntry {
+            slot: SlotName::Embedding,
+            fallback: FallbackStrategy::None,
+        },
+    );
+    let config = LocalModelConfig {
+        models: ModelSlots {
+            embedding: Some(EmbeddingSlot {
+                path: PathBuf::from("/tmp/bge.onnx"),
+                dimension: 384,
+            }),
+            extraction_llm: Some(LlmSlot {
+                path: PathBuf::from("/tmp/mistral.gguf"),
+                context_tokens: 8_192,
+                gpu_layers: Some(32),
+            }),
+        },
+        default_strategy: strategy,
+        context_window: 4096,
+        max_concurrency: 1,
+        chunk_timeout_ms: 30_000,
+    };
+    Arc::new(tokio::sync::RwLock::new(
+        LocalModelRuntime::from_config(config),
+    ))
+}
+
+#[tokio::test]
+async fn test_model_runtime_get_returns_503_when_unconfigured() {
+    let app = build_router(ApiState::new(
+        Arc::new(InMemoryStore::new()),
+        Arc::new(InMemoryMessageBus::new()),
+    ));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/model-runtime")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn test_model_runtime_reload_returns_503_when_unconfigured() {
+    let app = build_router(ApiState::new(
+        Arc::new(InMemoryStore::new()),
+        Arc::new(InMemoryMessageBus::new()),
+    ));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/model-runtime/reload")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn test_model_runtime_get_returns_strategy_table() {
+    let runtime = make_model_runtime();
+    let app = build_router(
+        ApiState::new(
+            Arc::new(InMemoryStore::new()),
+            Arc::new(InMemoryMessageBus::new()),
+        )
+        .with_model_runtime(Arc::clone(&runtime)),
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/model-runtime")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body_bytes = to_bytes(response.into_body(), 4096).await.unwrap();
+    let payload: Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(payload["provider"], "local");
+    assert_eq!(payload["strategy"].as_array().unwrap().len(), 3);
+    assert!(payload["embedding_slot"].is_object());
+    assert!(payload["extraction_llm_slot"].is_object());
+}
+
+#[tokio::test]
+async fn test_model_runtime_reload_returns_reloaded_payload() {
+    let runtime = make_model_runtime();
+    let app = build_router(
+        ApiState::new(
+            Arc::new(InMemoryStore::new()),
+            Arc::new(InMemoryMessageBus::new()),
+        )
+        .with_model_runtime(Arc::clone(&runtime)),
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/model-runtime/reload")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body_bytes = to_bytes(response.into_body(), 4096).await.unwrap();
+    let payload: Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(payload["reloaded"], true);
+    assert_eq!(payload["strategy_entries"].as_u64().unwrap(), 3);
+    assert!(payload["view"]["provider"].as_str().unwrap() == "local");
+    assert!(payload["note"]
+        .as_str()
+        .unwrap()
+        .contains("Restart the daemon"));
 }

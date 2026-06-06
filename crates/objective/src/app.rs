@@ -14,6 +14,7 @@ use objective_ingestion::{
     IngestionService, SourceDefinition, SourceRegistry, SourceType,
 };
 use objective_message_bus::InMemoryMessageBus;
+use objective_model_runtime::local::LocalModelRuntime;
 use objective_model_runtime::runtime_for;
 use objective_plugin_host::{
     audit_log_plugin, re_emitter_plugin, BuiltinPlugin, HostConfig, PluginHost,
@@ -48,6 +49,14 @@ pub struct AppState {
     pub plugin_host: Arc<PluginHost<InMemoryMessageBus>>,
     pub processor: Arc<dyn DocumentProcessor>,
     pub model_runtime_config: ModelRuntimeConfig,
+    /// Handle to the `LocalModelRuntime` (only populated for
+    /// `ModelRuntimeConfig::Local`). Behind `Arc<RwLock<_>>` so
+    /// the `POST /api/v1/model-runtime/reload` route can
+    /// rebuild the inner ONNX/llama.cpp providers. The
+    /// `processor` above still holds the pre-reload
+    /// `Arc<dyn ModelRuntime>`; a daemon restart is required
+    /// to apply the new strategy to in-flight requests.
+    pub model_runtime_handle: Option<Arc<tokio::sync::RwLock<LocalModelRuntime>>>,
 }
 
 impl AppState {
@@ -181,6 +190,8 @@ impl AppState {
 
         let processor = Self::build_processor(&config.model_runtime)?;
         let model_runtime_config = config.model_runtime.clone();
+        let model_runtime_handle =
+            Self::build_model_runtime_handle(&config.model_runtime)?;
 
         Ok(Self {
             store,
@@ -197,6 +208,7 @@ impl AppState {
             plugin_host,
             processor,
             model_runtime_config,
+            model_runtime_handle,
         })
     }
 
@@ -230,6 +242,22 @@ impl AppState {
                     ),
                 ))
             }
+        }
+    }
+
+    /// Build the reload-able handle that backs the
+    /// `POST /api/v1/model-runtime/reload` route. Only
+    /// `ModelRuntimeConfig::Local` produces a handle; the
+    /// heuristic and disabled modes return `None` so the
+    /// route responds with 503.
+    fn build_model_runtime_handle(
+        config: &ModelRuntimeConfig,
+    ) -> anyhow::Result<Option<Arc<tokio::sync::RwLock<LocalModelRuntime>>>> {
+        match config {
+            ModelRuntimeConfig::Local(local) => Ok(Some(Arc::new(
+                tokio::sync::RwLock::new(LocalModelRuntime::from_config(local.clone())),
+            ))),
+            _ => Ok(None),
         }
     }
 
@@ -297,6 +325,12 @@ pub async fn serve(config: ObjectiveConfig) -> anyhow::Result<()> {
         .with_websocket_hub(state.websocket_hub.clone())
         .with_source_registry(Arc::clone(&state.source_registry))
         .with_plugin_host(Arc::clone(&state.plugin_host) as Arc<_>);
+
+    let api_state = if let Some(handle) = state.model_runtime_handle.as_ref() {
+        api_state.with_model_runtime(Arc::clone(handle))
+    } else {
+        api_state
+    };
 
     let app = build_router(api_state);
     let addr = SocketAddr::from(([127, 0, 0, 1], config.api.rest_port));
