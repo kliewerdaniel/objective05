@@ -976,6 +976,7 @@ async fn test_entity_merge_combines_claims_and_drops_source() {
             confidence: 0.7,
             evidence_snippet: "Apple Inc in Austin".to_string(),
         }],
+        vector_index: None,
     };
     store.save_extraction(extraction).await.unwrap();
 

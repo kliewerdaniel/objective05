@@ -171,6 +171,45 @@ impl InferenceResult {
             completed_at: Utc::now(),
         }
     }
+
+    /// Build a result whose `structured` payload is a JSON
+    /// `Vec<f32>`. Used by embedding providers so the
+    /// orchestrator can decode the sidecar into a `ModelIndex`
+    /// without round-tripping through `text`.
+    pub fn embedding(
+        model: ModelId,
+        dimension: u32,
+        vector: Vec<f32>,
+        elapsed: Duration,
+    ) -> Self {
+        assert_eq!(
+            vector.len() as u32,
+            dimension,
+            "InferenceResult::embedding called with vector of length {} but dimension {}",
+            vector.len(),
+            dimension
+        );
+        let array = JsonValue::Array(
+            vector
+                .into_iter()
+                .map(|value| {
+                    JsonValue::Number(
+                        serde_json::Number::from_f64(value as f64)
+                            .unwrap_or_else(|| serde_json::Number::from(0)),
+                    )
+                })
+                .collect(),
+        );
+        Self {
+            text: String::new(),
+            structured: Some(array),
+            usage: TokenUsage::default(),
+            model,
+            kind: InferenceKind::Embedding,
+            elapsed,
+            completed_at: Utc::now(),
+        }
+    }
 }
 
 /// State of a single model slot within a runtime. Used by the

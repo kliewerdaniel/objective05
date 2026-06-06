@@ -10,13 +10,17 @@
 //! 1. The runtime is asked to do `ClaimExtraction` for every
 //!    chunk. The returned `InferenceResult.text` is taken as
 //!    the chunk's enhanced claim.
-//! 2. The heuristic service produces the baseline entities,
+//! 2. The runtime is asked to do `Embedding` for every chunk.
+//!    The returned `InferenceResult.structured` (a JSON
+//!    `Vec<f32>`) is decoded into a [`ModelIndex`] sidecar
+//!    attached to the [`ExtractionResult`].
+//! 3. The heuristic service produces the baseline entities,
 //!    claims, and relationships for the document.
-//! 3. If the runtime call succeeds, the heuristic's claim
+//! 4. If the runtime call succeeds, the heuristic's claim
 //!    set is replaced with the runtime's claims. If it fails
 //!    or times out, the heuristic's claim is kept and the
 //!    error is logged.
-//! 4. Entities and relationships always come from the
+//! 5. Entities and relationships always come from the
 //!    heuristic in v1; Phase 3 will route them through the
 //!    runtime as well.
 //!
@@ -30,10 +34,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use objective_core::{
     traits::{
-        DocumentProcessor, InferenceKind, InferenceResult, InferenceTask, ModelError,
+        DocumentProcessor, InferenceKind, InferenceResult, InferenceTask, ModelError, ModelId,
         ModelRuntime,
     },
-    types::{ExtractedClaim, ExtractionResult, RawDocument},
+    types::{ExtractedClaim, ExtractionResult, ModelIndex, ModelVector, RawDocument},
     Result,
 };
 use tokio::time::timeout;
@@ -115,20 +119,20 @@ impl RuntimeExtractionService {
     /// [`ModelError::UnsupportedKind`] — the orchestrator
     /// treats that as a clean signal to fall back. Any other
     /// error is logged and also reported as `Ok(None)`.
-    async fn infer_chunk(
+    async fn infer_kind(
         &self,
+        kind: InferenceKind,
         chunk: &str,
         index: usize,
-        document: &RawDocument,
+        document_id: &str,
     ) -> Option<InferenceResult> {
-        let task = InferenceTask::new(
-            objective_core::traits::ModelId::Mistral7BInstruct,
-            InferenceKind::ClaimExtraction,
-            chunk,
-        )
-        .with_timeout(self.config.chunk_timeout);
+        let model = match kind {
+            InferenceKind::Embedding => ModelId::BgeSmallEnV15,
+            _ => ModelId::Mistral7BInstruct,
+        };
+        let task =
+            InferenceTask::new(model, kind, chunk).with_timeout(self.config.chunk_timeout);
 
-        let document_id = document.id.to_string();
         match timeout(self.config.chunk_timeout, self.runtime.infer(task)).await {
             Ok(Ok(result)) => Some(result),
             Ok(Err(ModelError::Unavailable { kind })) => {
@@ -136,7 +140,7 @@ impl RuntimeExtractionService {
                     document_id = %document_id,
                     chunk_index = index,
                     kind = %kind,
-                    "runtime unavailable for chunk; falling back to heuristic"
+                    "runtime unavailable for chunk; falling back"
                 );
                 None
             }
@@ -145,7 +149,7 @@ impl RuntimeExtractionService {
                     document_id = %document_id,
                     chunk_index = index,
                     kind = %kind,
-                    "runtime does not support kind; falling back to heuristic"
+                    "runtime does not support kind; falling back"
                 );
                 None
             }
@@ -154,7 +158,7 @@ impl RuntimeExtractionService {
                     document_id = %document_id,
                     chunk_index = index,
                     error = %err,
-                    "runtime error; falling back to heuristic"
+                    "runtime error; falling back"
                 );
                 None
             }
@@ -163,7 +167,7 @@ impl RuntimeExtractionService {
                     document_id = %document_id,
                     chunk_index = index,
                     timeout_ms = self.config.chunk_timeout.as_millis() as u64,
-                    "runtime timeout; falling back to heuristic"
+                    "runtime timeout; falling back"
                 );
                 None
             }
@@ -179,13 +183,6 @@ impl RuntimeExtractionService {
         }
         Some(ExtractedClaim {
             claim_text: trimmed.to_string(),
-            // Placeholder subject — the runtime would normally
-            // emit a structured payload; for v1 we accept the
-            // raw text and let downstream code (broadcast,
-            // correlation) refine the subject. Keeping the
-            // shape compatible with `HeuristicExtractionService`
-            // means the rest of the pipeline does not need to
-            // branch on provider.
             subject_name: "unknown".to_string(),
             predicate: "stated".to_string(),
             object_name: None,
@@ -197,12 +194,48 @@ impl RuntimeExtractionService {
             attributed_to: Some("model-runtime".to_string()),
         })
     }
+
+    /// Decode an `InferenceResult` from an `Embedding` call
+    /// into a `ModelVector` and append it to the sidecar.
+    /// Returns `true` if the vector was appended. The sidecar's
+    /// `dimension` is set on the first successful decode.
+    fn push_embedding(
+        index: &mut ModelIndex,
+        result: InferenceResult,
+        chunk_index: usize,
+        chunk: &str,
+    ) -> bool {
+        let Some(structured) = result.structured else {
+            warn!(chunk_index, "embedding result missing structured payload");
+            return false;
+        };
+        let vector: Vec<f32> = match serde_json::from_value(structured) {
+            Ok(vector) => vector,
+            Err(err) => {
+                warn!(chunk_index, error = %err, "embedding payload is not a Vec<f32>");
+                return false;
+            }
+        };
+        if vector.is_empty() {
+            return false;
+        }
+        if index.dimension == 0 {
+            index.dimension = vector.len() as u32;
+        }
+        index.push(ModelVector {
+            chunk_index,
+            text_snippet: chunk.to_string(),
+            embedding: vector,
+        });
+        true
+    }
 }
 
 #[async_trait]
 impl DocumentProcessor for RuntimeExtractionService {
     async fn process(&self, document: &RawDocument) -> Result<ExtractionResult> {
         let baseline = self.fallback.process(document).await?;
+        let document_id = baseline.document_id.clone();
 
         let chunks = Self::chunk_body(&document.body, self.config.max_chunk_chars);
         if chunks.is_empty() {
@@ -211,16 +244,18 @@ impl DocumentProcessor for RuntimeExtractionService {
 
         let mut runtime_claims: Vec<ExtractedClaim> = Vec::new();
         let mut fallback_claims: Vec<ExtractedClaim> = Vec::new();
+        let mut vector_index = ModelIndex::new("embeddings", ModelId::BgeSmallEnV15, 0);
 
         for (index, chunk) in chunks.iter().enumerate() {
-            match self.infer_chunk(chunk, index, document).await {
+            match self
+                .infer_kind(InferenceKind::ClaimExtraction, chunk, index, &document_id)
+                .await
+            {
                 Some(result) => {
                     if let Some(claim) = self.runtime_text_to_claim(&result.text, chunk) {
                         runtime_claims.push(claim);
-                    } else {
-                        // Runtime returned empty text; keep the
-                        // heuristic claim for this chunk.
-                        fallback_claims.push(baseline.claims[index.min(baseline.claims.len() - 1)].clone());
+                    } else if let Some(claim) = baseline.claims.get(index) {
+                        fallback_claims.push(claim.clone());
                     }
                 }
                 None => {
@@ -229,19 +264,30 @@ impl DocumentProcessor for RuntimeExtractionService {
                     }
                 }
             }
+
+            if let Some(result) = self
+                .infer_kind(InferenceKind::Embedding, chunk, index, &document_id)
+                .await
+            {
+                Self::push_embedding(&mut vector_index, result, index, chunk);
+            }
         }
 
-        // Prefer runtime claims where available; fill the rest
-        // with the heuristic's claims. The merge is keyed on
-        // chunk index to keep the order stable for tests.
         let mut merged = runtime_claims;
         merged.extend(fallback_claims);
+
+        let vector_index = if vector_index.is_empty() {
+            None
+        } else {
+            Some(vector_index)
+        };
 
         Ok(ExtractionResult {
             document_id: baseline.document_id,
             entities: baseline.entities,
             claims: merged,
             relationships: baseline.relationships,
+            vector_index,
         })
     }
 }
@@ -302,8 +348,8 @@ mod tests {
         }
     }
 
-    /// Always succeeds. Used to exercise the "runtime returned
-    /// a result" branch.
+    /// Always succeeds with text. Embedding returns a 4-dim
+    /// vector so the sidecar has known shape.
     #[derive(Debug)]
     struct AlwaysSucceedRuntime;
 
@@ -318,12 +364,23 @@ mod tests {
         }
 
         async fn infer(&self, task: InferenceTask) -> ModelResult<InferenceResult> {
-            Ok(InferenceResult::text_only(
-                task.model,
-                task.kind,
-                format!("runtime said: {}", task.input),
-                Duration::from_millis(1),
-            ))
+            match task.kind {
+                InferenceKind::Embedding => {
+                    let vector: Vec<f32> = (0..4).map(|i| (i as f32) / 4.0).collect();
+                    Ok(InferenceResult::embedding(
+                        task.model,
+                        4,
+                        vector,
+                        Duration::from_millis(1),
+                    ))
+                }
+                _ => Ok(InferenceResult::text_only(
+                    task.model,
+                    task.kind,
+                    format!("runtime said: {}", task.input),
+                    Duration::from_millis(1),
+                )),
+            }
         }
     }
 
@@ -398,11 +455,14 @@ mod tests {
             !result.claims.is_empty(),
             "heuristic claims should be preserved"
         );
-        // No runtime claims should leak in.
         assert!(result
             .claims
             .iter()
             .all(|c| c.attributed_to.as_deref() != Some("model-runtime")));
+        assert!(
+            result.vector_index.is_none(),
+            "vector_index is absent when runtime is unavailable for every chunk"
+        );
     }
 
     #[tokio::test]
@@ -419,6 +479,44 @@ mod tests {
             .claims
             .iter()
             .any(|claim| claim.attributed_to.as_deref() == Some("model-runtime")));
+    }
+
+    #[tokio::test]
+    async fn process_attaches_vector_index_when_runtime_supports_embedding() {
+        let runtime: Arc<dyn ModelRuntime> = Arc::new(AlwaysSucceedRuntime);
+        let service = RuntimeExtractionService::new(runtime);
+        let document = make_document(
+            "Apple Inc announced a 10% expansion in Austin. Analysts reported hiring.",
+        );
+
+        let result = service.process(&document).await.unwrap();
+
+        let index = result
+            .vector_index
+            .expect("vector_index should be present when embedding succeeds");
+        assert_eq!(index.dimension, 4);
+        assert_eq!(index.model, ModelId::BgeSmallEnV15);
+        assert_eq!(index.vectors.len(), 2);
+        assert_eq!(index.vectors[0].chunk_index, 0);
+        assert_eq!(index.vectors[1].chunk_index, 1);
+    }
+
+    #[tokio::test]
+    async fn vector_index_into_vector_entries_adapts_to_repository() {
+        let runtime: Arc<dyn ModelRuntime> = Arc::new(AlwaysSucceedRuntime);
+        let service = RuntimeExtractionService::new(runtime);
+        let document = make_document(
+            "Apple Inc announced a 10% expansion in Austin. Analysts reported hiring.",
+        );
+
+        let result = service.process(&document).await.unwrap();
+        let entries = result
+            .vector_index
+            .unwrap()
+            .into_vector_entries(&result.document_id);
+        assert_eq!(entries.len(), 2);
+        assert!(entries[0].id.contains(&result.document_id));
+        assert_eq!(entries[0].vector.len(), 4);
     }
 
     #[tokio::test]
@@ -448,6 +546,10 @@ mod tests {
             .claims
             .iter()
             .all(|c| c.attributed_to.as_deref() != Some("model-runtime")));
+        assert!(
+            result.vector_index.is_none(),
+            "vector_index is absent when embedding times out"
+        );
     }
 
     #[tokio::test]
@@ -459,5 +561,6 @@ mod tests {
         let result = service.process(&document).await.unwrap();
 
         assert!(result.claims.is_empty());
+        assert!(result.vector_index.is_none());
     }
 }

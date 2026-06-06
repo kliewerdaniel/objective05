@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::ExtractedEntity;
+use super::{ExtractedEntity, ModelIndex};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -42,4 +42,11 @@ pub struct ExtractionResult {
     pub entities: Vec<ExtractedEntity>,
     pub claims: Vec<ExtractedClaim>,
     pub relationships: Vec<ExtractedRelationship>,
+    /// Optional embedding sidecar produced by a `ModelRuntime`.
+    /// Absent for the v0 heuristic pipeline and for documents
+    /// that were processed without an embedding slot. Phase 2
+    /// populates this when `ModelRuntimeConfig::Local` has an
+    /// `embedding` slot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vector_index: Option<ModelIndex>,
 }

@@ -26,6 +26,7 @@ impl DocumentProcessor for HeuristicExtractionService {
             entities,
             claims,
             relationships,
+            vector_index: None,
         })
     }
 }

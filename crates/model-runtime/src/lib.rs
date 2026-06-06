@@ -13,8 +13,10 @@
 //! phasing plan.
 
 pub mod noop;
+pub mod onnx;
 
 pub use noop::{NoopRuntime, NoopStrategy};
+pub use onnx::OnnxRuntime;
 
 use std::sync::Arc;
 
@@ -29,9 +31,17 @@ pub fn default_runtime() -> Arc<dyn ModelRuntime> {
 }
 
 /// Factory used by `crates/objective` to pick a runtime based
-/// on `ModelRuntimeConfig`. Phase 1 maps every non-`Disabled`
-/// variant onto `NoopRuntime`; Phase 2/3 will return ONNX and
-/// llama.cpp implementations.
+/// on `ModelRuntimeConfig`.
+///
+/// * `Disabled` -> error (callers should use
+///   `HeuristicExtractionService` directly).
+/// * `Heuristic` -> `NoopRuntime::heuristic()` (exercises the
+///   per-chunk fallback path).
+/// * `Local` -> `OnnxRuntime` (Phase 2). Embedding-only; non-
+///   embedding kinds report `Unavailable` and the orchestrator
+///   falls back. When no embedding slot is configured the
+///   runtime returns `InvalidConfig` on the first embedding
+///   call and the orchestrator falls back.
 pub fn runtime_for(
     config: &objective_core::ModelRuntimeConfig,
 ) -> Result<Arc<dyn ModelRuntime>, objective_core::ObjectiveError> {
@@ -44,7 +54,9 @@ pub fn runtime_for(
             ))
         }
         objective_core::ModelRuntimeConfig::Heuristic => Ok(Arc::new(NoopRuntime::heuristic())),
-        objective_core::ModelRuntimeConfig::Local(_) => Ok(Arc::new(NoopRuntime::passthrough())),
+        objective_core::ModelRuntimeConfig::Local(local) => {
+            Ok(Arc::new(OnnxRuntime::from_config(local)))
+        }
     }
 }
 
@@ -63,7 +75,7 @@ pub fn inventory(_runtime: &Arc<dyn ModelRuntime>) -> Vec<ModelInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use objective_core::{LocalModelConfig, ModelRuntimeConfig};
+    use objective_core::{LocalModelConfig, ModelRuntimeConfig, ModelSlots};
 
     #[test]
     fn runtime_for_disabled_returns_error() {
@@ -78,15 +90,15 @@ mod tests {
     }
 
     #[test]
-    fn runtime_for_local_returns_passthrough_noop() {
+    fn runtime_for_local_returns_onnx() {
         let local = ModelRuntimeConfig::Local(LocalModelConfig {
-            model_path: std::path::PathBuf::from("/tmp/model"),
+            models: ModelSlots::default(),
             context_window: 4096,
             max_concurrency: 1,
             chunk_timeout_ms: 30_000,
         });
         let runtime = runtime_for(&local).unwrap();
-        assert_eq!(runtime.provider(), "noop");
+        assert_eq!(runtime.provider(), "onnx");
     }
 
     #[tokio::test]

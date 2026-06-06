@@ -24,11 +24,12 @@ pub struct ObjectiveConfig {
 /// provider on a per-chunk error or timeout. Phase 1 ships only
 /// the `NoopRuntime` provider; Phase 2 (`onnx`) and Phase 3
 /// (`llama`) will plug a real backend in here.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum ModelRuntimeConfig {
     /// Default: do not construct a runtime. Extraction uses
     /// `HeuristicExtractionService` directly. v0 behaviour.
+    #[default]
     Disabled,
     /// Use the heuristic fallback service; chunk-level
     /// `InferenceResult`s are produced by `NoopRuntime` and
@@ -42,17 +43,12 @@ pub enum ModelRuntimeConfig {
     Local(LocalModelConfig),
 }
 
-impl Default for ModelRuntimeConfig {
-    fn default() -> Self {
-        ModelRuntimeConfig::Disabled
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LocalModelConfig {
-    /// Path to the model directory (GGUF, ONNX, etc.).
-    /// Phase 1 ignores the path; Phase 2/3 will load it.
-    pub model_path: PathBuf,
+    /// Model slots. Phase 2 ships the `embedding` slot (ONNX);
+    /// Phase 3 will add `extraction_llm` (llama.cpp).
+    #[serde(default)]
+    pub models: ModelSlots,
     /// Context window in tokens. Defaults to 4096.
     #[serde(default = "default_context_window")]
     pub context_window: u32,
@@ -62,6 +58,22 @@ pub struct LocalModelConfig {
     /// Per-chunk timeout in milliseconds. Defaults to 30s.
     #[serde(default = "default_chunk_timeout_ms")]
     pub chunk_timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelSlots {
+    /// ONNX-backed embedding slot. Phase 2 only.
+    pub embedding: Option<EmbeddingSlot>,
+}
+
+/// One named ONNX embedding model. The `dimension` is asserted
+/// at runtime against the model's output shape; a mismatch is
+/// reported as `Backend("dimension mismatch")` so the
+/// orchestrator can fall back.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EmbeddingSlot {
+    pub path: PathBuf,
+    pub dimension: u32,
 }
 
 fn default_context_window() -> u32 {
@@ -99,11 +111,18 @@ impl std::fmt::Display for ModelRuntimeConfig {
         match self {
             ModelRuntimeConfig::Disabled => f.write_str("disabled"),
             ModelRuntimeConfig::Heuristic => f.write_str("heuristic"),
-            ModelRuntimeConfig::Local(cfg) => write!(
-                f,
-                "local({}ms, ctx={}, conc={})",
-                cfg.chunk_timeout_ms, cfg.context_window, cfg.max_concurrency
-            ),
+            ModelRuntimeConfig::Local(cfg) => {
+                let embedding = if cfg.models.embedding.is_some() {
+                    "on"
+                } else {
+                    "off"
+                };
+                write!(
+                    f,
+                    "local({}ms, ctx={}, conc={}, embed={})",
+                    cfg.chunk_timeout_ms, cfg.context_window, cfg.max_concurrency, embedding
+                )
+            }
         }
     }
 }
@@ -216,7 +235,7 @@ mod tests {
         assert!(!ModelRuntimeConfig::Disabled.requires_runtime());
         assert!(ModelRuntimeConfig::Heuristic.requires_runtime());
         let local = ModelRuntimeConfig::Local(LocalModelConfig {
-            model_path: PathBuf::from("/tmp/model"),
+            models: ModelSlots::default(),
             context_window: 4096,
             max_concurrency: 1,
             chunk_timeout_ms: 30_000,
@@ -230,7 +249,7 @@ mod tests {
         assert!(disabled.chunk_timeout().is_none());
 
         let local = ModelRuntimeConfig::Local(LocalModelConfig {
-            model_path: PathBuf::from("/tmp/model"),
+            models: ModelSlots::default(),
             context_window: 4096,
             max_concurrency: 2,
             chunk_timeout_ms: 5_000,
@@ -247,13 +266,28 @@ mod tests {
         assert_eq!(ModelRuntimeConfig::Heuristic.to_string(), "heuristic");
         assert_eq!(
             ModelRuntimeConfig::Local(LocalModelConfig {
-                model_path: PathBuf::from("/tmp/model"),
+                models: ModelSlots::default(),
                 context_window: 4096,
                 max_concurrency: 1,
                 chunk_timeout_ms: 5_000,
             })
             .to_string(),
-            "local(5000ms, ctx=4096, conc=1)"
+            "local(5000ms, ctx=4096, conc=1, embed=off)"
+        );
+        assert_eq!(
+            ModelRuntimeConfig::Local(LocalModelConfig {
+                models: ModelSlots {
+                    embedding: Some(EmbeddingSlot {
+                        path: PathBuf::from(".objective/models/bge-small-en-v1.5/model.onnx"),
+                        dimension: 384,
+                    }),
+                },
+                context_window: 4096,
+                max_concurrency: 1,
+                chunk_timeout_ms: 5_000,
+            })
+            .to_string(),
+            "local(5000ms, ctx=4096, conc=1, embed=on)"
         );
     }
 
