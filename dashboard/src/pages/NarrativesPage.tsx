@@ -17,8 +17,8 @@ export const NarrativesPage: React.FC = () => {
     try {
       await api.resolveContradiction(c.id, { note: note || undefined });
       addNotification(`Contradiction resolved.`, 'success');
-    } catch (err: any) {
-      addNotification(`Failed to resolve: ${err.message}`, 'error');
+    } catch (err) {
+      addNotification(`Failed to resolve: ${(err as Error).message}`, 'error');
     } finally {
       setResolving(null);
     }

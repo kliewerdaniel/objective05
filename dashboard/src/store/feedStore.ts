@@ -258,8 +258,8 @@ export const useFeedStore = create<FeedState>((set) => ({
         health,
         loading: false,
       });
-    } catch (e: any) {
-      set({ error: e.message || 'Failed to sync with api', loading: false });
+    } catch (e) {
+      set({ error: (e as Error).message || 'Failed to sync with api', loading: false });
     }
   },
   

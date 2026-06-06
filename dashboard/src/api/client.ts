@@ -3,6 +3,11 @@ import type {
   RawDocument,
   ExtractionResult,
   DerivedEvent,
+  EventRecord,
+  EntitySummary,
+  EntityDetail,
+  ExtractedClaim,
+  ExtractedEntity,
   NarrativesResponse,
   NarrativeDetailResponse,
   ContradictionsResponse,
@@ -51,16 +56,16 @@ export const api = {
   getStats: () => request<{ documents: number; extractions: number; events: number }>('/stats'),
   getDocuments: () => request<RawDocument[]>('/documents'),
   getExtractions: () => request<ExtractionResult[]>('/extractions'),
-  getEvents: () => request<any[]>('/events'),
-  
+  getEvents: () => request<{ events: EventRecord[] }>('/events'),
+
   getDerivedEvents: () => request<DerivedEvent[]>('/derived-events'),
   getDerivedEvent: (id: string) => request<DerivedEvent>(`/derived-events/${id}`),
-  
-  getEntities: () => request<any[]>('/entities'),
-  getEntitySummary: () => request<any>('/entities/summary'),
-  getEntity: (name: string) => request<any>(`/entities/${name}`),
-  
-  getClaims: () => request<any[]>('/claims'),
+
+  getEntities: () => request<{ entities: ExtractedEntity[] }>('/entities'),
+  getEntitySummary: () => request<{ entities: EntitySummary[] }>('/entities/summary'),
+  getEntity: (name: string) => request<EntityDetail>(`/entities/${name}`),
+
+  getClaims: () => request<{ claims: ExtractedClaim[] }>('/claims'),
   
   getSources: () => request<{ sources: SourceInfo[]; total_sources: number }>('/sources'),
   

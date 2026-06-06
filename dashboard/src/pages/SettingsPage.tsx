@@ -21,7 +21,7 @@ export const SettingsPage: React.FC = () => {
     api
       .getConfig()
       .then((c) => setLiveConfig(c))
-      .catch((err: any) => setConfigError(err.message ?? 'unavailable'));
+      .catch((err: unknown) => setConfigError((err as Error).message ?? 'unavailable'));
   }, []);
 
   const handleSave = (e: React.FormEvent) => {

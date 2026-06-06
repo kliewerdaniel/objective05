@@ -14,7 +14,7 @@ export interface RawDocument {
   fetched_at: string;
   language: string;
   content_hash: string;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
 }
 
 export type EntityType = 'person' | 'organization' | 'location' | 'concept' | 'event_topic';
@@ -24,9 +24,23 @@ export interface ExtractedEntity {
   entity_type: EntityType;
   aliases: string[];
   description?: string;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   confidence: number;
   evidence_snippet: string;
+}
+
+export interface EntitySummary {
+  name: string;
+  entity_type: string;
+  document_count: number;
+  confidence: number;
+  evidence_snippet: string;
+}
+
+export interface EntityDetail {
+  entity: ExtractedEntity;
+  claims: ExtractedClaim[];
+  document_count: number;
 }
 
 export interface ExtractedClaim {
@@ -40,6 +54,28 @@ export interface ExtractedClaim {
   confidence: number;
   evidence_snippet: string;
   attributed_to?: string;
+}
+
+export interface EventEnvelopeView {
+  id: string;
+  event_type: string;
+  version: number;
+  timestamp: string;
+  source: string;
+  correlation_id: string;
+  causation_id: string;
+  data: unknown;
+  metadata: {
+    producer: string;
+    producer_version: string;
+    retry_count: number;
+    produced_at: string;
+  };
+}
+
+export interface EventRecord {
+  subject: string;
+  event: EventEnvelopeView;
 }
 
 export interface ExtractedRelationship {
@@ -87,7 +123,7 @@ export interface DerivedEvent {
   last_claim_at: string;
   claim_ids: string[];
   document_ids: string[];
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
 }
 
 export interface Narrative {

@@ -59,8 +59,8 @@ export const SourcesPage: React.FC = () => {
       setNewSourceName('');
       setNewSourceUrl('');
       setNewSourceType('rss');
-    } catch (e: any) {
-      addNotification(`Failed to register source: ${e.message}`, 'error');
+    } catch (e) {
+      addNotification(`Failed to register source: ${(e as Error).message}`, 'error');
     } finally {
       setSubmitting(false);
     }
@@ -72,8 +72,8 @@ export const SourcesPage: React.FC = () => {
     try {
       await removeRegisteredSource(name);
       addNotification(`Source "${name}" removed.`, 'success');
-    } catch (e: any) {
-      addNotification(`Failed to remove: ${e.message}`, 'error');
+    } catch (e) {
+      addNotification(`Failed to remove: ${(e as Error).message}`, 'error');
     } finally {
       setActing(null);
     }
@@ -87,8 +87,8 @@ export const SourcesPage: React.FC = () => {
         `Source "${name}" ${!currentlyEnabled ? 'enabled' : 'disabled'}.`,
         'success',
       );
-    } catch (e: any) {
-      addNotification(`Failed to update: ${e.message}`, 'error');
+    } catch (e) {
+      addNotification(`Failed to update: ${(e as Error).message}`, 'error');
     } finally {
       setActing(null);
     }
@@ -99,8 +99,8 @@ export const SourcesPage: React.FC = () => {
     try {
       const count = await triggerRegisteredSource(name);
       addNotification(`Polled "${name}" — ${count} document(s) ingested.`, 'success');
-    } catch (e: any) {
-      addNotification(`Poll failed: ${e.message}`, 'error');
+    } catch (e) {
+      addNotification(`Poll failed: ${(e as Error).message}`, 'error');
     } finally {
       setActing(null);
     }

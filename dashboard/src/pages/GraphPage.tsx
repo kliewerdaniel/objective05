@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useFeedStore } from '../store/feedStore';
 import { useUiStore } from '../store/uiStore';
 import { ZoomIn, ZoomOut, RotateCcw, Search } from 'lucide-react';
@@ -23,52 +23,73 @@ interface Link {
   type: string;
 }
 
+interface GraphSeed {
+  nodes: Node[];
+  links: Link[];
+}
+
+// Deterministic 2D position so the force-directed layout always starts
+// from the same coordinates for a given id. Keeps re-renders from
+// teleporting nodes around the canvas.
+function deterministicPosition(id: string): { x: number; y: number } {
+  let hash = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    hash ^= id.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const u = ((hash >>> 0) % 1000) / 1000;
+  const v = (((hash >>> 10) >>> 0) % 1000) / 1000;
+  return { x: u * 600 + 100, y: v * 400 + 100 };
+}
+
 export const GraphPage: React.FC = () => {
   const { events, extractions, documents } = useFeedStore();
   const { openDetail } = useUiStore();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  
-  const [nodes, setNodes] = useState<Node[]>([]);
-  const [links, setLinks] = useState<Link[]>([]);
+  const nodesRef = useRef<Node[]>([]);
+  const linksRef = useRef<Link[]>([]);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
-  
+
   // Viewport transformation
   const [transform, setTransform] = useState({ x: 0, y: 0, zoom: 1 });
   const [isDragging, setIsDragging] = useState(false);
   const [draggedNodeIndex, setDraggedNodeIndex] = useState<number | null>(null);
   const dragStart = useRef({ x: 0, y: 0 });
 
-  // Generate nodes and links from store data on mount
-  useEffect(() => {
+  // Build the graph seed from upstream store data. The simulation loop
+  // mutates this seed in place; React only needs to re-run the memo
+  // when the upstream entities change.
+  const seed = useMemo<GraphSeed>(() => {
     const nodeMap = new Map<string, Node>();
     const linkList: Link[] = [];
 
-    // Add seeded events as Nodes
     events.forEach((ev) => {
       const id = `event-${ev.id}`;
+      const pos = deterministicPosition(id);
       nodeMap.set(id, {
         id,
         label: ev.title,
         type: 'event',
-        x: Math.random() * 600 + 100,
-        y: Math.random() * 400 + 100,
+        x: pos.x,
+        y: pos.y,
         vx: 0,
         vy: 0,
         radius: 14,
       });
 
-      // Add entities participating in the event
       ev.participating_entities.forEach((entName) => {
         const entId = `entity-${entName}`;
         if (!nodeMap.has(entId)) {
+          const entPos = deterministicPosition(entId);
           nodeMap.set(entId, {
             id: entId,
             label: entName,
             type: 'entity',
             subType: entName === 'Austin' ? 'location' : entName.includes('Inc') ? 'organization' : 'concept',
-            x: Math.random() * 600 + 100,
-            y: Math.random() * 400 + 100,
+            x: entPos.x,
+            y: entPos.y,
             vx: 0,
             vy: 0,
             radius: 10,
@@ -82,34 +103,34 @@ export const GraphPage: React.FC = () => {
       });
     });
 
-    // Add raw documents as Nodes if extractions exist
     extractions.forEach((ext) => {
       const doc = documents.find((d) => String(d.id) === ext.document_id);
       if (!doc) return;
       const docId = `doc-${doc.id}`;
-      
+      const docPos = deterministicPosition(docId);
+
       nodeMap.set(docId, {
         id: docId,
         label: doc.title || 'Document',
         type: 'document',
-        x: Math.random() * 600 + 100,
-        y: Math.random() * 400 + 100,
+        x: docPos.x,
+        y: docPos.y,
         vx: 0,
         vy: 0,
         radius: 12,
       });
 
-      // Link doc to entities extracted from it
       ext.entities.forEach((ent) => {
         const entId = `entity-${ent.name}`;
         if (!nodeMap.has(entId)) {
+          const entPos = deterministicPosition(entId);
           nodeMap.set(entId, {
             id: entId,
             label: ent.name,
             type: 'entity',
             subType: ent.entity_type,
-            x: Math.random() * 600 + 100,
-            y: Math.random() * 400 + 100,
+            x: entPos.x,
+            y: entPos.y,
             vx: 0,
             vy: 0,
             radius: 10,
@@ -123,19 +144,20 @@ export const GraphPage: React.FC = () => {
       });
     });
 
-    setNodes(Array.from(nodeMap.values()));
-    setLinks(linkList);
-    
-    // Auto-center viewport
-    if (canvasRef.current) {
-      const rect = canvasRef.current.getBoundingClientRect();
-      setTransform({ x: rect.width / 2 - 400, y: rect.height / 2 - 300, zoom: 0.95 });
-    }
+    return { nodes: Array.from(nodeMap.values()), links: linkList };
   }, [events, extractions, documents]);
+
+  // Sync the immutable seed into the mutable refs used by the
+  // simulation. Doing this from an effect (rather than calling
+  // setNodes/setLinks directly) keeps React out of the per-frame loop.
+  useEffect(() => {
+    nodesRef.current = seed.nodes;
+    linksRef.current = seed.links;
+  }, [seed]);
 
   // Force-directed layout physics loop
   useEffect(() => {
-    if (nodes.length === 0) return;
+    if (nodesRef.current.length === 0) return;
 
     let animationFrameId: number;
     const repulsionStrength = 220;
@@ -144,6 +166,9 @@ export const GraphPage: React.FC = () => {
     const gravity = 0.02;
 
     const tick = () => {
+      const nodes = nodesRef.current;
+      const links = linksRef.current;
+
       // 1. Repulsion between all nodes
       for (let i = 0; i < nodes.length; i++) {
         const nodeA = nodes[i];
@@ -214,7 +239,6 @@ export const GraphPage: React.FC = () => {
         }
       });
 
-      // Render the graph
       render();
       animationFrameId = requestAnimationFrame(tick);
     };
@@ -224,6 +248,8 @@ export const GraphPage: React.FC = () => {
       if (!canvas) return;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
+      const nodes = nodesRef.current;
+      const links = linksRef.current;
 
       // Clear with background color
       ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -292,7 +318,7 @@ export const GraphPage: React.FC = () => {
     return () => {
       cancelAnimationFrame(animationFrameId);
     };
-  }, [nodes, links, transform, searchQuery, selectedNode]);
+  }, [transform, searchQuery, selectedNode, seed]);
 
   // Handle Mouse Events for Pan/Zoom & Drag Node
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -307,6 +333,7 @@ export const GraphPage: React.FC = () => {
     const graphY = (clientY - transform.y) / transform.zoom;
 
     // Check if clicked a node
+    const nodes = nodesRef.current;
     const clickedNodeIndex = nodes.findIndex((node) => {
       const dx = node.x - graphX;
       const dy = node.y - graphY;
@@ -314,10 +341,11 @@ export const GraphPage: React.FC = () => {
     });
 
     if (clickedNodeIndex !== -1) {
+      const node = nodes[clickedNodeIndex];
       setDraggedNodeIndex(clickedNodeIndex);
-      setSelectedNode(nodes[clickedNodeIndex]);
-      nodes[clickedNodeIndex].fx = nodes[clickedNodeIndex].x;
-      nodes[clickedNodeIndex].fy = nodes[clickedNodeIndex].y;
+      setSelectedNode(node);
+      node.fx = node.x;
+      node.fy = node.y;
     } else {
       setIsDragging(true);
       dragStart.current = { x: e.clientX - transform.x, y: e.clientY - transform.y };
@@ -342,16 +370,22 @@ export const GraphPage: React.FC = () => {
       // Update dragged node position
       const graphX = (clientX - transform.x) / transform.zoom;
       const graphY = (clientY - transform.y) / transform.zoom;
-      nodes[draggedNodeIndex].fx = graphX;
-      nodes[draggedNodeIndex].fy = graphY;
+      const node = nodesRef.current[draggedNodeIndex];
+      if (node) {
+        node.fx = graphX;
+        node.fy = graphY;
+      }
     }
   };
 
   const handleMouseUp = () => {
     setIsDragging(false);
     if (draggedNodeIndex !== null) {
-      nodes[draggedNodeIndex].fx = null;
-      nodes[draggedNodeIndex].fy = null;
+      const node = nodesRef.current[draggedNodeIndex];
+      if (node) {
+        node.fx = null;
+        node.fy = null;
+      }
       setDraggedNodeIndex(null);
     }
   };
@@ -373,7 +407,7 @@ export const GraphPage: React.FC = () => {
       <div className="node-detail-panel glass-panel animate-fade-in">
         <h3 className="heading-md">{selectedNode.label}</h3>
         <span className="badge badge-purple">{selectedNode.type}</span>
-        
+
         <p className="text-muted mt-2">
           {selectedNode.type === 'entity' && `Extracted entity matching class type "${selectedNode.subType}".`}
           {selectedNode.type === 'event' && `Synthesized event constructed from multiple claims.`}

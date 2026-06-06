@@ -33,8 +33,8 @@ export const BroadcastsPage: React.FC = () => {
       const response = await api.generateBroadcast({});
       addNotification(`Broadcast "${response.broadcast.title}" generated.`, 'success');
       setSelectedBroadcast(response.broadcast);
-    } catch (err: any) {
-      addNotification(`Failed to generate: ${err.message}`, 'error');
+    } catch (err) {
+      addNotification(`Failed to generate: ${(err as Error).message}`, 'error');
     } finally {
       setGenerating(false);
     }
