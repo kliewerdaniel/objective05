@@ -1,17 +1,20 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use objective_api_gateway::{build_router, ApiState, WebSocketHub};
 use objective_core::{
     traits::{DocumentProcessor, DocumentRepository, ExtractionRepository, GraphRepository},
-    ObjectiveConfig,
+    ModelRuntimeConfig, ObjectiveConfig,
 };
 use objective_correlation::{store::FileEventRepository, EventEngine};
-use objective_extraction::HeuristicExtractionService;
+use objective_extraction::{
+    HeuristicExtractionService, RuntimeExtractionConfig, RuntimeExtractionService,
+};
 use objective_ingestion::{
     adapters::{RssSourceAdapter, StaticSourceAdapter},
     IngestionService, SourceDefinition, SourceRegistry, SourceType,
 };
 use objective_message_bus::InMemoryMessageBus;
+use objective_model_runtime::runtime_for;
 use objective_plugin_host::{
     audit_log_plugin, re_emitter_plugin, BuiltinPlugin, HostConfig, PluginHost,
 };
@@ -43,6 +46,8 @@ pub struct AppState {
     pub websocket_hub: WebSocketHub,
     pub source_registry: Arc<SourceRegistry>,
     pub plugin_host: Arc<PluginHost<InMemoryMessageBus>>,
+    pub processor: Arc<dyn DocumentProcessor>,
+    pub model_runtime_config: ModelRuntimeConfig,
 }
 
 impl AppState {
@@ -174,6 +179,9 @@ impl AppState {
             warn!(?err, "failed to register re-emitter plugin");
         }
 
+        let processor = Self::build_processor(&config.model_runtime)?;
+        let model_runtime_config = config.model_runtime.clone();
+
         Ok(Self {
             store,
             bus,
@@ -187,7 +195,42 @@ impl AppState {
             websocket_hub,
             source_registry,
             plugin_host,
+            processor,
+            model_runtime_config,
         })
+    }
+
+    /// Build the document processor that the pipeline worker
+    /// will use. Driven by `config.model_runtime`:
+    ///
+    /// * `Disabled` -> `HeuristicExtractionService` (v0 default;
+    ///   no runtime is constructed).
+    /// * `Heuristic` / `Local` -> `RuntimeExtractionService`
+    ///   backed by the provider returned by
+    ///   `objective_model_runtime::runtime_for`.
+    fn build_processor(
+        config: &ModelRuntimeConfig,
+    ) -> anyhow::Result<Arc<dyn DocumentProcessor>> {
+        match config {
+            ModelRuntimeConfig::Disabled => Ok(Arc::new(HeuristicExtractionService)),
+            ModelRuntimeConfig::Heuristic => {
+                let runtime = runtime_for(config)?;
+                Ok(Arc::new(RuntimeExtractionService::new(runtime)))
+            }
+            ModelRuntimeConfig::Local(local) => {
+                let runtime = runtime_for(config)?;
+                let chunk_timeout =
+                    Duration::from_millis(local.chunk_timeout_ms.max(1_000));
+                Ok(Arc::new(
+                    RuntimeExtractionService::new(runtime).with_config(
+                        RuntimeExtractionConfig {
+                            chunk_timeout,
+                            ..RuntimeExtractionConfig::default()
+                        },
+                    ),
+                ))
+            }
+        }
     }
 
     /// Run the first vertical slice through the full pipeline so the API has
@@ -201,7 +244,7 @@ impl AppState {
         );
         ingestion.poll_source(&adapter).await?;
 
-        let processor = HeuristicExtractionService;
+        let processor: Arc<dyn DocumentProcessor> = Arc::clone(&self.processor);
         for document in self.store.list_documents().await? {
             let extraction = processor.process(&document).await?;
             self.store.save_extraction(extraction.clone()).await?;
@@ -262,6 +305,7 @@ pub async fn serve(config: ObjectiveConfig) -> anyhow::Result<()> {
         %addr,
         graph = state.graph.is_stub(),
         vectors = state.vectors.is_stub(),
+        model_runtime = %state.model_runtime_config,
         "objective api listening"
     );
 
@@ -291,7 +335,7 @@ pub async fn serve(config: ObjectiveConfig) -> anyhow::Result<()> {
 
     // Start pipeline worker in background
     let ingestion = IngestionService::new(Arc::clone(&state.store), Arc::clone(&state.bus));
-    let processor: Arc<dyn DocumentProcessor> = Arc::new(HeuristicExtractionService);
+    let processor: Arc<dyn DocumentProcessor> = Arc::clone(&state.processor);
     let default_sources: Vec<Arc<dyn objective_core::traits::SourceAdapter>> = vec![
         Arc::new(RssSourceAdapter::new(
             "hackernews_front",

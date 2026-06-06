@@ -1220,6 +1220,7 @@ dependencies = [
  "objective-extraction",
  "objective-ingestion",
  "objective-message-bus",
+ "objective-model-runtime",
  "objective-plugin-host",
  "objective-scheduler",
  "objective-store",
@@ -1296,10 +1297,13 @@ dependencies = [
  "async-trait",
  "chrono",
  "objective-core",
+ "objective-model-runtime",
  "regex",
  "serde_json",
  "tempfile",
+ "thiserror 1.0.69",
  "tokio",
+ "tracing",
  "ulid",
 ]
 
@@ -1334,6 +1338,18 @@ dependencies = [
  "async-trait",
  "objective-core",
  "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "objective-model-runtime"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "objective-core",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
 ]

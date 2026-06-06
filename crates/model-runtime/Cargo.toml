@@ -1,5 +1,5 @@
 [package]
-name = "objective-extraction"
+name = "objective-model-runtime"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,15 +7,8 @@ repository.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+chrono.workspace = true
 objective-core = { path = "../core" }
-objective-model-runtime = { path = "../model-runtime" }
-regex.workspace = true
-serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-
-[dev-dependencies]
-chrono.workspace = true
-ulid.workspace = true
-tempfile.workspace = true

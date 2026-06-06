@@ -9,6 +9,7 @@ members = [
     "crates/scheduler",
     "crates/plugin-host",
     "crates/api-gateway",
+    "crates/model-runtime",
     "crates/objective",
 ]
 resolver = "2"

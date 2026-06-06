@@ -11,7 +11,7 @@ use objective_core::{
 };
 use regex::Regex;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct HeuristicExtractionService;
 
 #[async_trait]

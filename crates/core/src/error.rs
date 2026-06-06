@@ -21,4 +21,7 @@ pub enum ObjectiveError {
 
     #[error("api error: {0}")]
     Api(String),
+
+    #[error("model runtime error: {0}")]
+    ModelRuntime(String),
 }
