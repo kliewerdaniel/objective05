@@ -331,8 +331,13 @@ mod tests {
         assert_eq!(vector.len(), 384);
     }
 
+    #[cfg(not(feature = "llama"))]
     #[tokio::test]
     async fn claim_kind_dispatches_to_llama() {
+        // Without the `llama` feature, the deterministic
+        // stub emits a claims payload. With the feature on,
+        // a real GGUF file is required and the dispatch path
+        // is exercised in `llama::tests::real_llama_*`.
         let config = config_with_ner_strategy();
         let runtime = LocalModelRuntime::from_config(config);
         let task = InferenceTask::new(

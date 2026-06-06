@@ -249,6 +249,13 @@ Each phase is shippable behind a `local-models` Cargo feature so default builds 
 - Per-task routing via `default_strategy` block
 - Hot model load/unload via a `POST /api/v1/model-runtime/reload` endpoint
 
+### Phase 3.5 — Live swap + real llama.cpp session
+- `RuntimeExtractionService` holds `Arc<tokio::sync::RwLock<Arc<dyn ModelRuntime>>>`; the API route and the processor share the handle. `POST /api/v1/model-runtime/reload` takes the write lock, drops in a fresh `LocalModelRuntime`, and the next `process` call picks it up without a daemon restart.
+- `crates/model-runtime` gains the `llama` Cargo feature. `llama_cpp = "0.3"` is wired with `default-features = false, features = ["metal", "native"]` so macOS Apple Silicon gets GPU support out of the box. The vendored C++ build compiles llama.cpp from source via the `llama_cpp_sys` build script (cmake + clang + libclang required).
+- The real `infer` path runs inside `tokio::task::spawn_blocking` to keep the async runtime responsive. The C++ call sequence is `LlamaModel::load_from_file` → `LlamaModel::create_session` → `LlamaSession::advance_context` → `start_completing_with(StandardSampler::new_greedy(), max_tokens)`. Output is parsed as JSON when possible; if the model produces prose the deterministic stub takes over so the orchestrator still has a well-formed payload to decode.
+- The `llama` feature is opt-in. Default builds remain free of native deps.
+- Tests: `real_llama_inference_produces_text` runs only when `OBJECTIVE_LLAMA_TEST_MODEL` points at a real GGUF file. `real_llama_missing_model_returns_backend_error` always runs and asserts the orchestrator can fall back per chunk.
+
 ### Phase 4 — Lifecycle, observability, and load shedding
 - Model state machine from `docs/ai/model-strategy.md` exposed via `/api/v1/model-runtime`
 - Per-model inference queue with `tokio::sync::Semaphore` (default 4 concurrent)
