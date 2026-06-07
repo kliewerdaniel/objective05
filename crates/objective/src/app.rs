@@ -24,7 +24,7 @@ use objective_plugin_host::{
 use objective_scheduler::{SchedulerConfig, SchedulerService};
 use objective_store::{
     kuzu::KuzuGraphStore,
-    monitoring::MonitoringService,
+    monitoring::{ModelMetricsRow, ModelRuntimeMetricsSnapshot, MonitoringService},
     recovery::{RecoveryConfig, RecoveryService},
     retry_queue::RetryQueue,
     snapshot::SnapshotService,
@@ -417,6 +417,69 @@ pub async fn serve(config: ObjectiveConfig) -> anyhow::Result<()> {
             tracing::error!("pipeline worker error: {e}");
         }
     });
+
+    // Start the model-runtime metrics publisher. Phase 4:
+    // a small background task that polls the live
+    // `LocalModelRuntime` for its latency histograms and
+    // pushes the snapshot into the `MonitoringService` so
+    // `/api/v1/monitoring` and the persisted JSON file
+    // both reflect the live metrics. Only runs when a
+    // handle is attached (i.e. `ModelRuntimeConfig::Local`).
+    if let Some(handle) = state.model_runtime_handle.as_ref() {
+        let handle = Arc::clone(handle);
+        let monitoring = Arc::clone(&state.monitoring);
+        tokio::spawn(async move {
+            use std::time::Duration;
+            let mut ticker = tokio::time::interval(Duration::from_secs(1));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                let snap = handle.view.read().await.metrics_snapshot();
+                let rows_by_kind: Vec<ModelMetricsRow> = snap
+                    .by_kind
+                    .iter()
+                    .map(|(k, h)| ModelMetricsRow {
+                        key: k.to_string(),
+                        count: h.count,
+                        sum_ms: h.sum_ms,
+                        min_ms: h.min_ms,
+                        max_ms: h.max_ms,
+                        p50_ms: h.p50_ms,
+                        p95_ms: h.p95_ms,
+                        p99_ms: h.p99_ms,
+                        timeouts: h.timeouts,
+                        errors: h.errors,
+                    })
+                    .collect();
+                let rows_by_model: Vec<ModelMetricsRow> = snap
+                    .by_model
+                    .iter()
+                    .map(|(k, h)| ModelMetricsRow {
+                        key: k.as_str().to_string(),
+                        count: h.count,
+                        sum_ms: h.sum_ms,
+                        min_ms: h.min_ms,
+                        max_ms: h.max_ms,
+                        p50_ms: h.p50_ms,
+                        p95_ms: h.p95_ms,
+                        p99_ms: h.p99_ms,
+                        timeouts: h.timeouts,
+                        errors: h.errors,
+                    })
+                    .collect();
+                let snapshot = ModelRuntimeMetricsSnapshot {
+                    total_calls: snap.total_calls,
+                    total_timeouts: snap.total_timeouts,
+                    total_errors: snap.total_errors,
+                    total_fallbacks: snap.total_fallbacks,
+                    by_kind: rows_by_kind,
+                    by_model: rows_by_model,
+                    last_observed_at: snap.last_observed_at,
+                };
+                monitoring.update_model_runtime(snapshot);
+            }
+        });
+    }
 
     axum::serve(listener, app).await?;
     Ok(())

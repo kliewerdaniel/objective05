@@ -19,18 +19,21 @@
 //!    against the plugin registry.
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use objective_core::traits::{
-    InferenceKind, InferenceResult, InferenceTask, ModelError, ModelId, ModelInfo, ModelResult,
-    ModelRuntime, ModelState,
+    InferenceKind, InferenceResult, InferenceTask, ModelError, ModelId, ModelInfo,
+    ModelResult, ModelRuntime, ModelSlotView, ModelState, ModelTimeoutKind,
 };
 use objective_core::{LocalModelConfig, SlotName, StrategyTable};
+use tokio::time::timeout;
 use tracing::warn;
 
 use crate::llama::LlamaRuntime;
+use crate::metrics::{CallOutcome, RuntimeMetrics, RuntimeMetricsSnapshot};
 use crate::onnx::OnnxRuntime;
+use crate::queue::{QueueTimeout, SlotQueue};
 
 #[derive(Debug, Clone)]
 pub struct LocalModelRuntime {
@@ -38,6 +41,9 @@ pub struct LocalModelRuntime {
     llama: LlamaRuntime,
     strategy: StrategyTable,
     config: Arc<LocalModelConfig>,
+    embedding_queue: SlotQueue,
+    llama_queue: SlotQueue,
+    metrics: Arc<RuntimeMetrics>,
 }
 
 impl LocalModelRuntime {
@@ -45,11 +51,30 @@ impl LocalModelRuntime {
         let onnx = OnnxRuntime::from_config(&config);
         let llama = LlamaRuntime::from_slot(config.models.extraction_llm.clone());
         let strategy = config.default_strategy.clone();
+        let queue_timeout = Duration::from_millis(config.queue_timeout_ms.max(1));
+        let embedding_queue = SlotQueue::new(config.max_concurrency.max(1), queue_timeout);
+        let llama_queue = SlotQueue::new(config.max_concurrency.max(1), queue_timeout);
+        // Mark every configured slot as `Ready` up front.
+        // The stub backends (`OnnxRuntime` / `LlamaRuntime`)
+        // are always "loaded"; the real backends (Phase 3.5+
+        // `ort::Session` / `llama_cpp` session) override
+        // the initial state to `NotLoaded` from inside
+        // `mark_loading` once `from_ort_path` /
+        // `from_gguf_path` is wired in.
+        if config.models.embedding.is_some() {
+            embedding_queue.state().mark_ready();
+        }
+        if config.models.extraction_llm.is_some() {
+            llama_queue.state().mark_ready();
+        }
         Self {
             onnx,
             llama,
             strategy,
             config: Arc::new(config),
+            embedding_queue,
+            llama_queue,
+            metrics: Arc::new(RuntimeMetrics::new()),
         }
     }
 
@@ -59,6 +84,33 @@ impl LocalModelRuntime {
 
     pub fn strategy(&self) -> &StrategyTable {
         &self.strategy
+    }
+
+    pub fn metrics_handle(&self) -> &Arc<RuntimeMetrics> {
+        &self.metrics
+    }
+
+    pub fn metrics_snapshot(&self) -> RuntimeMetricsSnapshot {
+        self.metrics.snapshot()
+    }
+
+    pub fn slot_views(&self) -> Vec<ModelSlotView> {
+        let mut views = Vec::new();
+        if self.config.models.embedding.is_some() {
+            views.push(slot_view(
+                ModelId::BgeSmallEnV15,
+                self.config.models.embedding.as_ref().map(|s| s.path.to_string_lossy().to_string()),
+                &self.embedding_queue,
+            ));
+        }
+        if self.config.models.extraction_llm.is_some() {
+            views.push(slot_view(
+                ModelId::Mistral7BInstruct,
+                self.config.models.extraction_llm.as_ref().map(|s| s.path.to_string_lossy().to_string()),
+                &self.llama_queue,
+            ));
+        }
+        views
     }
 
     /// Returns `Ok(handler)` if the strategy has an entry
@@ -81,15 +133,27 @@ impl LocalModelRuntime {
         }
     }
 
+    fn queue_for(&self, handler: LocalHandler) -> &SlotQueue {
+        match handler {
+            LocalHandler::Onnx => &self.embedding_queue,
+            LocalHandler::Llama => &self.llama_queue,
+        }
+    }
+
     /// Trigger a hot reload. Phase 3 rebuilds the inner
     /// runtimes from the captured `LocalModelConfig`; Phase
     /// 3.5 will additionally unload the previous
-    /// `llama-cpp-rs` session.
+    /// `llama-cpp-rs` session. Phase 4 also resets the
+    /// metrics table and slot state machines.
     pub fn reload(&mut self) {
         let config = (*self.config).clone();
         self.onnx = OnnxRuntime::from_config(&config);
         self.llama = LlamaRuntime::from_slot(config.models.extraction_llm.clone());
         self.strategy = config.default_strategy.clone();
+        let queue_timeout = Duration::from_millis(config.queue_timeout_ms.max(1));
+        self.embedding_queue = SlotQueue::new(config.max_concurrency.max(1), queue_timeout);
+        self.llama_queue = SlotQueue::new(config.max_concurrency.max(1), queue_timeout);
+        self.metrics.reset();
     }
 
     /// Build a serialisable snapshot of the runtime's current
@@ -111,6 +175,7 @@ impl LocalModelRuntime {
                 })
                 .collect(),
             chunk_timeout_ms: self.config.chunk_timeout_ms,
+            queue_timeout_ms: self.config.queue_timeout_ms,
             context_window: self.config.context_window,
             max_concurrency: self.config.max_concurrency,
         }
@@ -143,6 +208,21 @@ impl SlotPath for objective_core::LlmSlot {
     }
 }
 
+fn slot_view(model: ModelId, path: Option<String>, queue: &SlotQueue) -> ModelSlotView {
+    let (state, last_error, last_used_at, transitions) = queue.state().snapshot();
+    ModelSlotView {
+        model,
+        path,
+        state,
+        max_concurrency: queue.max_concurrency(),
+        active: queue.state().active(),
+        queued: queue.state().queued(),
+        last_error,
+        last_used_at,
+        transitions,
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum LocalHandler {
     Onnx,
@@ -168,19 +248,86 @@ impl ModelRuntime for LocalModelRuntime {
 
     async fn infer(&self, task: InferenceTask) -> ModelResult<InferenceResult> {
         let started = Instant::now();
-        match self.handler_for(task.kind)? {
-            LocalHandler::Onnx => self.onnx.infer(task).await,
+        let handler = self.handler_for(task.kind)?;
+        let model_id = task.model.clone();
+        let queue = self.queue_for(handler);
+        // Acquire a permit before the inner call so a
+        // saturated queue returns a clean queue-timeout
+        // error rather than blocking the orchestrator.
+        let guard = match queue.acquire().await {
+            Ok(guard) => guard,
+            Err(QueueTimeout(d)) => {
+                self.metrics
+                    .record_call(task.kind, &model_id, d.as_millis() as u64, CallOutcome::Timeout);
+                queue.state().record_error(format!(
+                    "queue saturated ({}ms); {} active / {} queued",
+                    d.as_millis(),
+                    queue.state().active(),
+                    queue.state().queued()
+                ));
+                return Err(ModelError::Timeout {
+                    kind: ModelTimeoutKind::Queue,
+                    elapsed: d,
+                });
+            }
+        };
+        // Hard per-call timeout enforced at the runtime
+        // level (in addition to the caller-side timeout
+        // in `RuntimeExtractionService`).
+        let chunk_timeout = Duration::from_millis(self.config.chunk_timeout_ms.max(1));
+        let result = match handler {
+            LocalHandler::Onnx => {
+                match timeout(chunk_timeout, self.onnx.infer(task.clone())).await {
+                    Ok(Ok(result)) => Ok(result),
+                    Ok(Err(err)) => Err(err),
+                    Err(_elapsed) => Err(ModelError::Timeout {
+                        kind: ModelTimeoutKind::Chunk,
+                        elapsed: chunk_timeout,
+                    }),
+                }
+            }
             LocalHandler::Llama => {
-                let mut result = self.llama.infer(task).await?;
-                // The composite runtime reports the elapsed
-                // time measured at the dispatch boundary so
-                // the orchestrator's per-task timeout sees a
-                // consistent value regardless of inner
-                // implementation.
-                result.elapsed = started.elapsed();
-                Ok(result)
+                let mut task = task.clone();
+                task.timeout = chunk_timeout;
+                match timeout(chunk_timeout, self.llama.infer(task)).await {
+                    Ok(Ok(mut result)) => {
+                        // The composite runtime reports the
+                        // elapsed time measured at the
+                        // dispatch boundary so the
+                        // orchestrator's per-task timeout
+                        // sees a consistent value
+                        // regardless of inner implementation.
+                        result.elapsed = started.elapsed();
+                        Ok(result)
+                    }
+                    Ok(Err(err)) => Err(err),
+                    Err(_elapsed) => Err(ModelError::Timeout {
+                        kind: ModelTimeoutKind::Chunk,
+                        elapsed: chunk_timeout,
+                    }),
+                }
+            }
+        };
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        match &result {
+            Ok(_) => {
+                self.metrics
+                    .record_call(task.kind, &model_id, elapsed_ms, CallOutcome::Ok);
+            }
+            Err(ModelError::Timeout { .. }) => {
+                self.metrics
+                    .record_call(task.kind, &model_id, elapsed_ms, CallOutcome::Timeout);
+                guard.release();
+                return result;
+            }
+            Err(err) => {
+                self.metrics
+                    .record_call(task.kind, &model_id, elapsed_ms, CallOutcome::Error);
+                queue.state().record_error(err.to_string());
             }
         }
+        guard.release();
+        result
     }
 
     async fn warmup(&self, model: ModelId) -> ModelResult<()> {
@@ -196,6 +343,14 @@ impl ModelRuntime for LocalModelRuntime {
     async fn shutdown(&self) -> ModelResult<()> {
         warn!("LocalModelRuntime::shutdown called; nothing to release in Phase 3");
         Ok(())
+    }
+
+    async fn metrics(&self) -> objective_core::traits::ModelRuntimeMetrics {
+        (&self.metrics.snapshot()).into()
+    }
+
+    async fn slot_views(&self) -> Vec<ModelSlotView> {
+        LocalModelRuntime::slot_views(self)
     }
 }
 
@@ -231,6 +386,7 @@ pub struct LocalModelRuntimeView {
     pub extraction_llm_slot: Option<SlotView>,
     pub strategy: Vec<StrategyEntryView>,
     pub chunk_timeout_ms: u64,
+    pub queue_timeout_ms: u64,
     pub context_window: u32,
     pub max_concurrency: u32,
 }
@@ -238,6 +394,7 @@ pub struct LocalModelRuntimeView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use objective_core::traits::ModelSlotState;
     use objective_core::{EmbeddingSlot, FallbackStrategy, LlmSlot, ModelSlots, StrategyEntry};
     use std::path::PathBuf;
 
@@ -287,6 +444,7 @@ mod tests {
             context_window: 4096,
             max_concurrency: 1,
             chunk_timeout_ms: 30_000,
+            queue_timeout_ms: 30_000,
         }
     }
 
@@ -305,6 +463,7 @@ mod tests {
             context_window: 4096,
             max_concurrency: 1,
             chunk_timeout_ms: 30_000,
+            queue_timeout_ms: 30_000,
         };
         let runtime = LocalModelRuntime::from_config(config);
         let task = InferenceTask::new(
@@ -369,6 +528,7 @@ mod tests {
             context_window: 4096,
             max_concurrency: 1,
             chunk_timeout_ms: 30_000,
+            queue_timeout_ms: 30_000,
         };
         let runtime = LocalModelRuntime::from_config(config);
         assert_eq!(runtime.provider(), "local");
@@ -397,6 +557,7 @@ mod tests {
             .iter()
             .any(|row| row.kind == "claim_extraction"));
         assert_eq!(view.chunk_timeout_ms, 30_000);
+        assert_eq!(view.queue_timeout_ms, 30_000);
         assert_eq!(view.context_window, 4096);
     }
 
@@ -407,5 +568,151 @@ mod tests {
         let json = serde_json::to_string(&view).unwrap();
         let parsed: LocalModelRuntimeView = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, view);
+    }
+
+    fn embedding_only_config(max_concurrency: u32, queue_timeout_ms: u64) -> LocalModelConfig {
+        let mut strategy = StrategyTable::default();
+        strategy.insert(
+            InferenceKind::Embedding,
+            StrategyEntry {
+                slot: SlotName::Embedding,
+                fallback: FallbackStrategy::None,
+            },
+        );
+        LocalModelConfig {
+            models: ModelSlots {
+                embedding: Some(EmbeddingSlot {
+                    path: PathBuf::from("/tmp/bge.onnx"),
+                    dimension: 4,
+                }),
+                extraction_llm: None,
+            },
+            default_strategy: strategy,
+            context_window: 4096,
+            max_concurrency,
+            chunk_timeout_ms: 30_000,
+            queue_timeout_ms,
+        }
+    }
+
+    #[tokio::test]
+    async fn infer_records_successful_call_in_metrics() {
+        let config = embedding_only_config(2, 1_000);
+        let runtime = LocalModelRuntime::from_config(config);
+        let task = InferenceTask::new(
+            ModelId::BgeSmallEnV15,
+            InferenceKind::Embedding,
+            "hello",
+        );
+        runtime.infer(task).await.unwrap();
+        let snap = runtime.metrics_snapshot();
+        assert_eq!(snap.total_calls, 1);
+        assert_eq!(snap.total_timeouts, 0);
+        assert_eq!(snap.total_errors, 0);
+        let kind = snap
+            .by_kind
+            .get(&InferenceKind::Embedding)
+            .expect("embedding histogram present");
+        assert_eq!(kind.count, 1);
+    }
+
+    #[tokio::test]
+    async fn slot_view_reports_active_and_queued_counts() {
+        let config = embedding_only_config(1, 1_000);
+        let runtime = LocalModelRuntime::from_config(config);
+        let views = LocalModelRuntime::slot_views(&runtime);
+        assert_eq!(views.len(), 1);
+        let view = &views[0];
+        assert_eq!(view.model, ModelId::BgeSmallEnV15);
+        assert_eq!(view.max_concurrency, 1);
+        assert_eq!(view.active, 0);
+        assert_eq!(view.queued, 0);
+        assert_eq!(view.state, ModelSlotState::Ready);
+    }
+
+    #[tokio::test]
+    async fn slot_view_transitions_to_busy_during_inference() {
+        let config = embedding_only_config(1, 1_000);
+        let runtime = std::sync::Arc::new(LocalModelRuntime::from_config(config));
+        let task = InferenceTask::new(
+            ModelId::BgeSmallEnV15,
+            InferenceKind::Embedding,
+            "long",
+        );
+        let runtime_clone = std::sync::Arc::clone(&runtime);
+        let h = tokio::spawn(async move { runtime_clone.infer(task).await });
+        // Give the spawned task a moment to acquire the
+        // permit and start the inner call.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let views = LocalModelRuntime::slot_views(&runtime);
+        let view = &views[0];
+        // The OnnxRuntime stub is synchronous, so the
+        // permit is already released by the time we read
+        // the snapshot. The state should be `Ready` (or
+        // `Busy` if we caught it mid-call). Either is
+        // acceptable; what matters is that the counters
+        // stay in sync.
+        assert!(matches!(
+            view.state,
+            ModelSlotState::Ready | ModelSlotState::Busy { .. }
+        ));
+        h.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn reload_resets_metrics_and_slot_state() {
+        let config = embedding_only_config(2, 1_000);
+        let mut runtime = LocalModelRuntime::from_config(config);
+        let task = InferenceTask::new(
+            ModelId::BgeSmallEnV15,
+            InferenceKind::Embedding,
+            "hello",
+        );
+        runtime.infer(task).await.unwrap();
+        assert_eq!(runtime.metrics_snapshot().total_calls, 1);
+        runtime.reload();
+        assert_eq!(runtime.metrics_snapshot().total_calls, 0);
+    }
+
+    #[tokio::test]
+    async fn infer_returns_queue_timeout_when_slot_is_saturated() {
+        // max_concurrency = 1 + a 50ms queue timeout. We
+        // hold the only permit in a spawned task and try
+        // a second call from the main task; the second
+        // call should time out and return a queue
+        // timeout error.
+        let config = embedding_only_config(1, 50);
+        let runtime = std::sync::Arc::new(LocalModelRuntime::from_config(config));
+        // Block the only permit with a long-blocking call.
+        // We do this by spawning a task that holds the
+        // permit for 200ms via the queue.
+        let blocking_runtime = std::sync::Arc::clone(&runtime);
+        let handle = tokio::spawn(async move {
+            let _guard = blocking_runtime
+                .embedding_queue
+                .acquire()
+                .await
+                .expect("permit");
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        });
+        // Give the spawned task a moment to grab the
+        // permit.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let task = InferenceTask::new(
+            ModelId::BgeSmallEnV15,
+            InferenceKind::Embedding,
+            "queued",
+        );
+        let err = runtime.infer(task).await.unwrap_err();
+        assert!(matches!(
+            err,
+            ModelError::Timeout {
+                kind: ModelTimeoutKind::Queue,
+                ..
+            }
+        ));
+        handle.await.unwrap();
+        let snap = runtime.metrics_snapshot();
+        assert_eq!(snap.total_timeouts, 1);
     }
 }

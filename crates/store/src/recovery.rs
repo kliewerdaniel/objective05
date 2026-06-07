@@ -585,6 +585,7 @@ mod tests {
             errors,
             started_at: old.clone(),
             last_activity_at: old,
+            model_runtime: None,
         }
     }
 

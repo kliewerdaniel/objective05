@@ -10,8 +10,9 @@ pub use graph::GraphRepository;
 pub use message_bus::MessageBus;
 pub use processor::DocumentProcessor;
 pub use runtime::{
-    InferenceKind, InferenceResult, InferenceTask, ModelError, ModelId, ModelInfo, ModelResult,
-    ModelRuntime, ModelState, TokenUsage,
+    InferenceKind, InferenceResult, InferenceTask, LatencyHistogram, ModelError, ModelId, ModelInfo,
+    ModelResult, ModelRuntime, ModelRuntimeMetrics, ModelSlotState, ModelSlotTransition, ModelSlotView,
+    ModelState, ModelTimeoutKind, TokenUsage, LATENCY_BUCKETS_MS,
 };
 pub use source_adapter::SourceAdapter;
 pub use storage::{DocumentRepository, ExtractionRepository};

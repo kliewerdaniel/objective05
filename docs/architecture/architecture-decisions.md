@@ -69,15 +69,17 @@ How is this decision enforced?
 
 ### ADR-002: Kuzu DB as Knowledge Graph
 
-**Status:** Accepted
+**Status:** Accepted (with feature-gated backend)
 
 **Context:** The system requires a graph database to store entities, claims, events, narratives, and contradictions with temporal provenance. Options considered: Kuzu DB (embedded, columnar), Neo4j (server, heavyweight), Dgraph (distributed, complex), SQLite with graph extensions (limited query capability), custom RDF store (maintenance burden).
 
 **Decision:** Use Kuzu DB as the primary knowledge graph store. Kuzu is embedded (no separate server process), columnar (fast analytical queries), supports Cypher queries, has ACID transactions, and is designed for local-first applications.
 
+**Implementation note:** The Rust binding is wired up behind the `kuzu` Cargo feature on `crates/store`. The default build ships an in-memory stub that implements the same `GraphRepository` trait (the type alias `objective_store::kuzu::KuzuGraphStore` resolves to the stub by default and to the Kuzu-backed impl when the feature is enabled). This keeps first-compile and CI fast while still giving operators a real, durable backend in production builds (`cargo build --release --features kuzu`). See `docs/data/knowledge-graph.md` for the current schema and `crates/store/src/kuzu/real.rs` for the implementation.
+
 **Consequences:**
 - Easier: Embedding, deployment, backup (just copy files), analytical queries over large graphs
-- Harder: Limited community size, no built-in replication, Cypher subset (not full Cypher)
+- Harder: Limited community size, no built-in replication, Cypher subset (not full Cypher), Kuzu project was archived upstream (last published crate `kuzu = 0.11.3`, Oct 2025; community successor is LadybugDB); cxx version must be pinned exactly (1.0.138) so cxx-build and cxx agree on the cxxbridge symbol suffix
 - Tradeoff: Embedded simplicity vs. server-based features; acceptable for single-machine deployment
 
 **Compliance:** All graph operations use Kuzu's C API through the language binding.

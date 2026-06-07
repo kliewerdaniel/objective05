@@ -26,7 +26,6 @@
 //! receive a well-formed `Vec<f32>` of the configured
 //! dimension.
 
-use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use async_trait::async_trait;
@@ -35,7 +34,12 @@ use objective_core::traits::{
     ModelRuntime, ModelState,
 };
 use objective_core::{EmbeddingSlot, ModelSlots};
-use tracing::{info, warn};
+use tracing::warn;
+
+#[cfg(feature = "onnx")]
+use std::sync::{Arc, Mutex};
+#[cfg(feature = "onnx")]
+use tracing::info;
 
 #[cfg(feature = "onnx")]
 use ort::session::Session as OrtSession;

@@ -59,12 +59,25 @@ pub struct LocalModelConfig {
     /// Context window in tokens. Defaults to 4096.
     #[serde(default = "default_context_window")]
     pub context_window: u32,
-    /// Maximum concurrent inference requests. Defaults to 1.
+    /// Maximum concurrent inference requests per slot.
+    /// Defaults to 4 (the documented Phase 4 default).
+    /// Calls beyond this limit queue up to
+    /// `queue_timeout_ms` before the orchestrator falls
+    /// back to the heuristic.
     #[serde(default = "default_max_concurrency")]
     pub max_concurrency: u32,
     /// Per-chunk timeout in milliseconds. Defaults to 30s.
+    /// Enforced by the runtime itself in addition to the
+    /// caller-side timeout in `RuntimeExtractionService`.
     #[serde(default = "default_chunk_timeout_ms")]
     pub chunk_timeout_ms: u64,
+    /// Per-call queue-acquire timeout in milliseconds. A
+    /// caller waiting for a permit longer than this value
+    /// receives `ModelError::Timeout` and the orchestrator
+    /// falls back to the heuristic for the chunk. Defaults
+    /// to 30s (matches `chunk_timeout_ms`).
+    #[serde(default = "default_queue_timeout_ms")]
+    pub queue_timeout_ms: u64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -150,10 +163,14 @@ fn default_context_window() -> u32 {
 }
 
 fn default_max_concurrency() -> u32 {
-    1
+    4
 }
 
 fn default_chunk_timeout_ms() -> u64 {
+    30_000
+}
+
+fn default_queue_timeout_ms() -> u64 {
     30_000
 }
 
@@ -170,6 +187,18 @@ impl ModelRuntimeConfig {
             ModelRuntimeConfig::Heuristic => Some(std::time::Duration::from_secs(30)),
             ModelRuntimeConfig::Local(cfg) => {
                 Some(std::time::Duration::from_millis(cfg.chunk_timeout_ms))
+            }
+        }
+    }
+
+    /// Per-call queue-acquire timeout if a runtime is
+    /// configured. Mirrors [`Self::chunk_timeout`].
+    pub fn queue_timeout(&self) -> Option<std::time::Duration> {
+        match self {
+            ModelRuntimeConfig::Disabled => None,
+            ModelRuntimeConfig::Heuristic => Some(std::time::Duration::from_secs(30)),
+            ModelRuntimeConfig::Local(cfg) => {
+                Some(std::time::Duration::from_millis(cfg.queue_timeout_ms))
             }
         }
     }
@@ -193,8 +222,9 @@ impl std::fmt::Display for ModelRuntimeConfig {
                 };
                 write!(
                     f,
-                    "local({}ms, ctx={}, conc={}, embed={}, llm={}, strategy={})",
+                    "local({}ms/queue{}ms, ctx={}, conc={}, embed={}, llm={}, strategy={})",
                     cfg.chunk_timeout_ms,
+                    cfg.queue_timeout_ms,
                     cfg.context_window,
                     cfg.max_concurrency,
                     embedding,
@@ -319,6 +349,7 @@ mod tests {
             context_window: 4096,
             max_concurrency: 1,
             chunk_timeout_ms: 30_000,
+            queue_timeout_ms: 30_000,
         });
         assert!(local.requires_runtime());
     }
@@ -334,11 +365,82 @@ mod tests {
             context_window: 4096,
             max_concurrency: 2,
             chunk_timeout_ms: 5_000,
+            queue_timeout_ms: 7_000,
         });
         assert_eq!(
             local.chunk_timeout(),
             Some(std::time::Duration::from_millis(5_000))
         );
+    }
+
+    #[test]
+    fn queue_timeout_matches_configured_value() {
+        let local = ModelRuntimeConfig::Local(LocalModelConfig {
+            models: ModelSlots::default(),
+            default_strategy: StrategyTable::default(),
+            context_window: 4096,
+            max_concurrency: 2,
+            chunk_timeout_ms: 5_000,
+            queue_timeout_ms: 7_000,
+        });
+        assert_eq!(
+            local.queue_timeout(),
+            Some(std::time::Duration::from_millis(7_000))
+        );
+    }
+
+    #[test]
+    fn queue_timeout_defaults_to_thirty_seconds() {
+        let local = ModelRuntimeConfig::Local(LocalModelConfig {
+            models: ModelSlots::default(),
+            default_strategy: StrategyTable::default(),
+            context_window: 4096,
+            max_concurrency: 4,
+            chunk_timeout_ms: 30_000,
+            queue_timeout_ms: 30_000,
+        });
+        assert_eq!(
+            local.queue_timeout(),
+            Some(std::time::Duration::from_millis(30_000))
+        );
+    }
+
+    #[test]
+    fn max_concurrency_defaults_to_four() {
+        let yaml = r#"
+data_root: .objective
+api:
+  rest_port: 8080
+  websocket_port: 8081
+  cors_allowed_origins: ["http://localhost:5173"]
+  auth_enabled: false
+storage:
+  database_path: .objective/db
+  document_path: .objective/documents
+  vector_path: .objective/vectors
+  queue_path: .objective/queue
+  graph_path: .objective/graph
+  embedding_path: .objective/embeddings
+message_bus:
+  nats_url: nats://127.0.0.1:4222
+  use_embedded: true
+logging:
+  level: info
+model_runtime:
+  mode: local
+  models: {}
+  default_strategy: {}
+  context_window: 4096
+  chunk_timeout_ms: 30000
+"#;
+        let config: ObjectiveConfig = serde_yaml::from_str(yaml).unwrap();
+        match config.model_runtime {
+            ModelRuntimeConfig::Local(local) => {
+                assert_eq!(local.max_concurrency, 4);
+                assert_eq!(local.queue_timeout_ms, 30_000);
+            }
+            other => panic!("expected Local, got {other:?}"),
+        }
     }
 
     #[test]
@@ -352,9 +454,10 @@ mod tests {
                 context_window: 4096,
                 max_concurrency: 1,
                 chunk_timeout_ms: 5_000,
+                queue_timeout_ms: 5_000,
             })
             .to_string(),
-            "local(5000ms, ctx=4096, conc=1, embed=off, llm=off, strategy=0)"
+            "local(5000ms/queue5000ms, ctx=4096, conc=1, embed=off, llm=off, strategy=0)"
         );
         assert_eq!(
             ModelRuntimeConfig::Local(LocalModelConfig {
@@ -373,9 +476,10 @@ mod tests {
                 context_window: 4096,
                 max_concurrency: 1,
                 chunk_timeout_ms: 5_000,
+                queue_timeout_ms: 5_000,
             })
             .to_string(),
-            "local(5000ms, ctx=4096, conc=1, embed=on, llm=on, strategy=0)"
+            "local(5000ms/queue5000ms, ctx=4096, conc=1, embed=on, llm=on, strategy=0)"
         );
     }
 

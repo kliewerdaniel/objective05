@@ -270,6 +270,54 @@ Each phase is shippable behind a `local-models` Cargo feature so default builds 
 - Per-model timeout enforcement at the runtime level (not just the call site)
 - Latency histograms exposed via the existing monitoring service
 
+#### Phase 4 — Implementation
+
+**State machine.** `crates/model-runtime/src/state.rs` defines `SlotStateMachine`, one instance per configured slot, sharing atomics (active count, queued count) with a `std::sync::RwLock<Vec<ModelSlotTransition>>` capped at 32 entries. The state surface is `objective_core::traits::ModelSlotState`:
+
+```rust
+pub enum ModelSlotState {
+    NotLoaded,
+    Loading,
+    Ready,
+    Busy { active: u32, queued: u32 },
+    Draining { active: u32 },
+    Error { message: String },
+    Unloading,
+}
+```
+
+`is_accepting()` returns `true` for `Ready` and `Busy { queued: 0, .. }`; the orchestrator uses it to decide whether a slot can take another call. Transitions are driven from the runtime, not from the caller — `LocalModelRuntime::infer` calls `mark_busy()` on entry, `mark_ready()` / `mark_draining()` / `mark_error()` on exit.
+
+**Per-slot queue.** `crates/model-runtime/src/queue.rs` defines `SlotQueue`, a `tokio::sync::Semaphore` whose capacity is `LocalModelConfig::max_concurrency` (default 4). A `SlotGuard` RAII wrapper releases the permit on drop. `acquire()` returns `QueueTimeout` if the permit is not granted within `queue_timeout_ms` (default 30s); the error is mapped to `ModelError::Timeout { kind: Queue, elapsed }` and counted in metrics.
+
+**Runtime-level timeout.** `LocalModelRuntime::infer` wraps the inner model call in `tokio::time::timeout(chunk_timeout)`. Expiry returns `ModelError::Timeout { kind: Chunk, elapsed }`. Both `Queue` and `Chunk` timeouts are observable through the histogram and counter block, so operators can tell whether latency is being shed at the queue or at the inference.
+
+**Latency histograms.** `objective_core::traits::LatencyHistogram` uses fixed buckets `[1, 5, 10, 25, 50, 100, 250, 500, 1_000, 5_000, 30_000]` (ms). `observe(ms)` increments the bucket, `observe_timeout()` increments the timeout bucket (30_000+), and `observe_error()` increments the error bucket. Percentiles are derived from bucket counts on read — p50, p95, p99 are reported as the upper edge of the bucket containing the rank.
+
+**Wiring.**
+
+- `crates/model-runtime/src/local.rs` is the only place that touches the queue, the state machine, and the histogram. `infer` is a single linear flow: acquire permit → drive state → run inner call under timeout → record outcome → return.
+- `crates/model-runtime/src/metrics.rs` defines `RuntimeMetrics` (atomic counters + `Mutex<HashMap<String, LatencyHistogram>>`) and `RuntimeMetricsSnapshot` (the serialisable projection). Counters are split by `InferenceKind` (`by_kind`) and by `ModelId` (`by_model`).
+- `crates/api-gateway/src/routes/model_runtime.rs` returns the slot views and the metrics snapshot in the existing `GET /api/v1/model-runtime` response. The `POST /reload` endpoint resets both.
+- `crates/store/src/monitoring.rs` gains `ModelRuntimeMetricsSnapshot` and `update_model_runtime()`; `PipelineMetrics` now carries `Option<ModelRuntimeMetricsSnapshot>` and `/api/v1/monitoring` surfaces it under `metrics.model_runtime`.
+- `crates/objective/src/app.rs` spawns a 1Hz publisher task that snapshots the runtime and pushes it into the monitoring service, so the metric survives restarts via the existing recovery flow.
+
+**Configuration.**
+
+```yaml
+models:
+  local:
+    max_concurrency: 4         # default 4
+    chunk_timeout_ms: 120_000  # unchanged
+    queue_timeout_ms: 30_000  # NEW: time to wait for a permit
+    slots:
+      extraction_llm: { ... }
+      embedding:      { ... }
+    default_strategy: [ ... ]
+```
+
+**Tests.** 60 model-runtime unit tests cover state transitions, queue saturation, timeout classification, histogram bucket selection, and `reload` semantics. 57 api-gateway integration tests cover the route surface, including slot views, histograms, and the monitoring route's new `model_runtime` block. 36 store tests cover the monitoring round-trip.
+
 ## Testing Strategy
 
 - Unit: `ModelRuntime` mock; `RuntimeExtractionService` tests assert fallback paths and chunk-level error tolerance

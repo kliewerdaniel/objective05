@@ -91,6 +91,20 @@ impl ModelRuntimeHandle {
     pub async fn snapshot(&self) -> objective_model_runtime::LocalModelRuntimeView {
         self.view.read().await.view()
     }
+
+    /// Live per-slot views. Phase 4 of the model-runtime
+    /// design: each configured slot reports its state
+    /// machine, queue depth, and last-few transitions so
+    /// the dashboard can render live saturation.
+    pub async fn slot_views(&self) -> Vec<objective_core::traits::ModelSlotView> {
+        self.view.read().await.slot_views()
+    }
+
+    /// Live per-runtime metrics. Phase 4.
+    pub async fn metrics(&self) -> objective_core::traits::ModelRuntimeMetrics {
+        use objective_core::traits::ModelRuntime;
+        self.view.read().await.metrics().await
+    }
 }
 
 impl ApiState {

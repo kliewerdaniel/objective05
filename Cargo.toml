@@ -27,6 +27,13 @@ async-trait = "0.1"
 axum = { version = "0.7", features = ["ws"] }
 chrono = { version = "0.4", features = ["serde"] }
 config = "0.14"
+# Pinned to match the version kuzu 0.11 brings in transitively.
+# cxx-build generates the C++ bridge with a versioned symbol name
+# (e.g. `_kuzu_rs$cxxbridge1$<cxx-build-version>$value_get_string`),
+# so the build-time crate and the runtime crate must agree exactly,
+# otherwise the linker rejects the cxx shim symbols.
+cxx = "=1.0.138"
+cxx-build = "=1.0.138"
 feed-rs = "2.3"
 flate2 = "1.0"
 futures = "0.3"

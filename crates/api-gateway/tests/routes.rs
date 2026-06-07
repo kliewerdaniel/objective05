@@ -363,6 +363,85 @@ fn build_recovery_app() -> axum::Router {
     build_router(ApiState::new(store, bus).with_recovery(recovery))
 }
 
+fn build_monitoring_app() -> (axum::Router, Arc<MonitoringService>) {
+    let dir = tempfile::tempdir().unwrap().keep();
+    let monitoring = Arc::new(MonitoringService::new(&dir));
+    let bus = Arc::new(InMemoryMessageBus::new());
+    let store = Arc::new(InMemoryStore::new());
+    let router = build_router(
+        ApiState::new(store, bus).with_monitoring(Arc::clone(&monitoring)),
+    );
+    (router, monitoring)
+}
+
+#[tokio::test]
+async fn test_monitoring_route_returns_pipeline_metrics() {
+    let (app, monitoring) = build_monitoring_app();
+    monitoring.record_document_ingested();
+    monitoring.record_extraction_completed();
+    let body = get_json(app, "/api/v1/monitoring").await;
+    assert_eq!(body["message"], "ok");
+    let metrics = &body["metrics"];
+    assert_eq!(metrics["documents_ingested"], 1);
+    assert_eq!(metrics["extractions_completed"], 1);
+    // Phase 4: model_runtime is optional and absent
+    // until the runtime publishes a snapshot.
+    assert!(metrics["model_runtime"].is_null());
+}
+
+#[tokio::test]
+async fn test_monitoring_route_surfaces_model_runtime_snapshot() {
+    use objective_store::monitoring::{
+        ModelMetricsRow, ModelRuntimeMetricsSnapshot,
+    };
+    let (app, monitoring) = build_monitoring_app();
+    let snapshot = ModelRuntimeMetricsSnapshot {
+        total_calls: 7,
+        total_timeouts: 1,
+        total_errors: 0,
+        total_fallbacks: 2,
+        by_kind: vec![ModelMetricsRow {
+            key: "claim_extraction".to_string(),
+            count: 7,
+            sum_ms: 1_400,
+            min_ms: 50,
+            max_ms: 500,
+            p50_ms: 100,
+            p95_ms: 500,
+            p99_ms: 500,
+            timeouts: 1,
+            errors: 0,
+        }],
+        by_model: vec![ModelMetricsRow {
+            key: "mistral-7b-instruct".to_string(),
+            count: 7,
+            sum_ms: 1_400,
+            min_ms: 50,
+            max_ms: 500,
+            p50_ms: 100,
+            p95_ms: 500,
+            p99_ms: 500,
+            timeouts: 1,
+            errors: 0,
+        }],
+        last_observed_at: None,
+    };
+    monitoring.update_model_runtime(snapshot);
+    let body = get_json(app, "/api/v1/monitoring").await;
+    let model_runtime = &body["metrics"]["model_runtime"];
+    assert_eq!(model_runtime["total_calls"], 7);
+    assert_eq!(model_runtime["total_timeouts"], 1);
+    assert_eq!(model_runtime["total_fallbacks"], 2);
+    let by_kind = model_runtime["by_kind"].as_array().unwrap();
+    assert_eq!(by_kind.len(), 1);
+    assert_eq!(by_kind[0]["key"], "claim_extraction");
+    assert_eq!(by_kind[0]["count"], 7);
+    assert_eq!(by_kind[0]["p95_ms"], 500);
+    let by_model = model_runtime["by_model"].as_array().unwrap();
+    assert_eq!(by_model.len(), 1);
+    assert_eq!(by_model[0]["key"], "mistral-7b-instruct");
+}
+
 #[tokio::test]
 async fn test_recovery_route_returns_state_when_configured() {
     let body = get_json(build_recovery_app(), "/api/v1/recovery").await;
@@ -1436,6 +1515,7 @@ fn make_model_runtime() -> Arc<ModelRuntimeHandle> {
         context_window: 4096,
         max_concurrency: 1,
         chunk_timeout_ms: 30_000,
+        queue_timeout_ms: 30_000,
     };
     let runtime = LocalModelRuntime::from_config(config.clone());
     let view = Arc::new(tokio::sync::RwLock::new(runtime));
@@ -1515,6 +1595,84 @@ async fn test_model_runtime_get_returns_strategy_table() {
     assert_eq!(payload["strategy"].as_array().unwrap().len(), 3);
     assert!(payload["embedding_slot"].is_object());
     assert!(payload["extraction_llm_slot"].is_object());
+    assert_eq!(payload["chunk_timeout_ms"], 30_000);
+    assert_eq!(payload["queue_timeout_ms"], 30_000);
+    assert_eq!(payload["max_concurrency"], 1);
+    // Phase 4 additions: per-slot views and per-runtime
+    // metrics are both surfaced.
+    let slots = payload["slots"].as_array().unwrap();
+    assert_eq!(slots.len(), 2);
+    let metrics = &payload["metrics"];
+    assert!(metrics.is_object());
+    assert_eq!(metrics["total_calls"], 0);
+}
+
+#[tokio::test]
+async fn test_model_runtime_get_includes_per_slot_state_machine() {
+    let runtime = make_model_runtime();
+    let app = build_router(
+        ApiState::new(
+            Arc::new(InMemoryStore::new()),
+            Arc::new(InMemoryMessageBus::new()),
+        )
+        .with_model_runtime(Arc::clone(&runtime)),
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/model-runtime")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body_bytes = to_bytes(response.into_body(), 8192).await.unwrap();
+    let payload: Value = serde_json::from_slice(&body_bytes).unwrap();
+    let slots = payload["slots"].as_array().unwrap();
+    // Each slot reports its model id, state, max
+    // concurrency, and the (zero) live counts.
+    for slot in slots {
+        assert!(slot["model"].is_string());
+        assert!(slot["state"].is_object());
+        assert_eq!(slot["state"]["phase"], "ready");
+        assert_eq!(slot["max_concurrency"], 1);
+        assert_eq!(slot["active"], 0);
+        assert_eq!(slot["queued"], 0);
+    }
+}
+
+#[tokio::test]
+async fn test_model_runtime_get_includes_latency_histograms() {
+    let runtime = make_model_runtime();
+    let app = build_router(
+        ApiState::new(
+            Arc::new(InMemoryStore::new()),
+            Arc::new(InMemoryMessageBus::new()),
+        )
+        .with_model_runtime(Arc::clone(&runtime)),
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/model-runtime")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body_bytes = to_bytes(response.into_body(), 8192).await.unwrap();
+    let payload: Value = serde_json::from_slice(&body_bytes).unwrap();
+    let metrics = &payload["metrics"];
+    // The metrics block is a JSON object with the documented
+    // fields; the per-kind/per-model maps are present
+    // (initially empty because no inference has happened).
+    assert!(metrics["by_kind"].is_object());
+    assert!(metrics["by_model"].is_object());
+    assert_eq!(metrics["total_fallbacks"], 0);
 }
 
 #[tokio::test]

@@ -472,3 +472,69 @@ Schema changes follow this process:
 - Materialized views for common query patterns
 - Multi-version concurrency control for concurrent writers
 - Automatic index recommendation based on query patterns
+
+## Current Implementation
+
+The schemas above describe the **target** model. The Phase 1 Kuzu backend in `crates/store/src/kuzu/real.rs` implements the three node/edge types that flow through extraction today (extracted entities, claims, and the typed relationships between them). Wider nodes (Source, Document, Event, Narrative, Contradiction) are still pending — the stub preserves the contract, so call sites are stable as the schema grows.
+
+### `Entity`
+
+```cypher
+CREATE NODE TABLE IF NOT EXISTS Entity(
+    name             STRING PRIMARY KEY,
+    entity_type      STRING,
+    aliases          STRING[],
+    description      STRING,
+    confidence       DOUBLE,
+    evidence_snippet STRING,
+    metadata_json    STRING
+)
+```
+
+- `name` is the canonical display name and the primary key (entities are upserted by name).
+- `aliases` is the list of alternative names from extraction.
+- `metadata_json` is a JSON-encoded string of the per-entity metadata map (Kuzu's C++ binding does not expose a native JSON type, so it is round-tripped through `serde_json`).
+- `entity_type` stores the variant label (`person` / `organization` / `location` / `concept` / `event_topic`).
+
+### `Claim`
+
+```cypher
+CREATE NODE TABLE IF NOT EXISTS Claim(
+    claim_text       STRING PRIMARY KEY,
+    subject_name     STRING,
+    predicate        STRING,
+    object_name      STRING,
+    object_value     STRING,
+    claim_type       STRING,
+    sentiment        DOUBLE,
+    confidence       DOUBLE,
+    evidence_snippet STRING,
+    attributed_to    STRING
+)
+```
+
+- `claim_text` is the extracted statement and the primary key.
+- `sentiment` is nullable; `None` is stored as `Value::Null(LogicalType::Double)`.
+- `claim_type` stores the variant label (`attribution` / `relation` / `quantification` / `temporal` / `comparison`).
+
+### `Relationship`
+
+```cypher
+CREATE REL TABLE IF NOT EXISTS Relationship(
+    FROM Entity TO Entity,
+    relationship_type STRING,
+    confidence        DOUBLE,
+    evidence_snippet  STRING
+)
+```
+
+- Both endpoints must already exist as `Entity` nodes (a `MATCH ... MERGE` upsert creates the relationship between them).
+- Multiple relationship types between the same pair are allowed; the key is `(from, to, relationship_type)`.
+
+### Operational Notes
+
+- The Kuzu database file lives at `<graph_path>/kuzu.db`; the directory is created on first open and the schema is migrated via three idempotent `CREATE ... IF NOT EXISTS` statements in `KuzuGraphStore::with_config`.
+- All Kuzu calls run inside `tokio::task::spawn_blocking` because the C++ binding is fully synchronous and the cxx `Database` type is `!Send + !Sync`. The `Database` itself is leaked into a `'static` reference (it is a process-level singleton) and per-call `Connection` borrows it.
+- Per-connection query timeout is set from `KuzuConfig::query_timeout_ms` (default 30 000 ms) on the first open and re-applied on each new connection.
+- The `cxx-build` crate is pinned to `=1.0.138` in the workspace `Cargo.toml` to match the cxx version kuzu ships with; a mismatch shows up as undefined cxxbridge symbols at link time.
+

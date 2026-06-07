@@ -5,6 +5,16 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+# Real Kuzu DB backend. Off by default because the C++ build chain
+# (cmake + clang + libclang) is heavy on first compile; the in-memory
+# stub preserves the GraphRepository contract. Build with:
+#   cargo test -p objective-store --features kuzu
+# Optionally with parallel C++ build:
+#   CMAKE_BUILD_PARALLEL_LEVEL=$(sysctl -n hw.ncpu) cargo test -p objective-store --features kuzu
+kuzu = ["dep:kuzu"]
+
 [dependencies]
 async-trait.workspace = true
 chrono.workspace = true
@@ -16,6 +26,10 @@ tokio.workspace = true
 tracing.workspace = true
 ulid.workspace = true
 utoipa.workspace = true
+# kuzu brings in `cxx` and `cxx-build` transitively; the workspace
+# `Cargo.toml` pins both to =1.0.138 so the cxx-bridge symbol suffix
+# generated at build time matches the one cxx (runtime) looks up.
+kuzu = { version = "0.11", optional = true }
 
 [dev-dependencies]
 objective-message-bus = { path = "../message-bus" }

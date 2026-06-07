@@ -14,8 +14,11 @@
 
 pub mod llama;
 pub mod local;
+pub mod metrics;
 pub mod noop;
 pub mod onnx;
+pub mod queue;
+pub mod state;
 
 pub use llama::LlamaRuntime;
 pub use local::{LocalModelRuntime, LocalModelRuntimeView, SlotView, StrategyEntryView};
@@ -100,6 +103,7 @@ mod tests {
             context_window: 4096,
             max_concurrency: 1,
             chunk_timeout_ms: 30_000,
+            queue_timeout_ms: 30_000,
         });
         let runtime = runtime_for(&local).unwrap();
         assert_eq!(runtime.provider(), "local");

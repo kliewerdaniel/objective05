@@ -1,11 +1,4 @@
-//! Stub implementation of the Kuzu-backed graph repository.
-//!
-//! The full integration with Kuzu DB is in progress. The current
-//! implementation provides a thread-safe in-memory graph that
-//! satisfies the [`GraphRepository`] trait so the rest of the
-//! application can be wired up against the documented interface.
-//! When the Kuzu schema migrations and query helpers stabilize,
-//! this module will be replaced with the real Kuzu implementation.
+//! In-memory stub [`KuzuGraphStore`] used when the `kuzu` feature is off.
 
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -19,17 +12,20 @@ use objective_core::{
 use tracing::warn;
 
 #[derive(Debug, Default)]
+#[cfg_attr(feature = "kuzu", allow(dead_code))]
 pub struct KuzuGraphStore {
     entities: RwLock<HashMap<String, ExtractedEntity>>,
     claims: RwLock<HashMap<String, ExtractedClaim>>,
     relationships: RwLock<Vec<ExtractedRelationship>>,
 }
 
+#[cfg_attr(feature = "kuzu", allow(dead_code))]
 impl KuzuGraphStore {
     pub fn new<P: AsRef<std::path::Path>>(_path: P) -> Result<Self> {
         warn!(
-            "KuzuGraphStore is currently an in-memory stub; the path argument is ignored. \
-             Replace with the Kuzu-backed implementation once the schema migrations land."
+            "KuzuGraphStore is the in-memory stub (compiled without the `kuzu` feature); \
+             the path argument is ignored. Rebuild with `--features kuzu` to enable the \
+             persistent Kuzu DB backend."
         );
         Ok(Self::default())
     }
