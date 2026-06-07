@@ -143,6 +143,6 @@ mod tests {
             .render(InferenceKind::ClaimExtraction, "Apple Inc announced a 10% expansion in Austin.")
             .unwrap();
         assert!(rendered.user.contains("Apple Inc announced"));
-        assert!(rendered.user.contains("{{chunk}}") == false);
+        assert!(!rendered.user.contains("{{chunk}}"));
     }
 }

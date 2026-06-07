@@ -60,7 +60,7 @@ impl CronSchedule {
             if self.matches(&candidate) {
                 return candidate;
             }
-            candidate = candidate + Duration::minutes(1);
+            candidate += Duration::minutes(1);
         }
 
         after + Duration::hours(1)
@@ -101,7 +101,7 @@ fn field_matches(field: &CronField, value: u32, _min: u32, _max: u32) -> bool {
     match field {
         CronField::Any => true,
         CronField::Fixed(fixed) => value == *fixed,
-        CronField::Step(step) => value % step == 0,
+        CronField::Step(step) => value.is_multiple_of(*step),
     }
 }
 

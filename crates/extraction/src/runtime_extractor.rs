@@ -141,8 +141,7 @@ impl RuntimeExtractionService {
         new: Arc<dyn ModelRuntime>,
     ) -> Arc<dyn ModelRuntime> {
         let mut guard = self.runtime.write().await;
-        let previous = std::mem::replace(&mut *guard, new);
-        previous
+        std::mem::replace(&mut *guard, new)
     }
 
     /// Read the current runtime. Cheap clone of the inner
@@ -317,7 +316,7 @@ impl RuntimeExtractionService {
         };
         claims
             .iter()
-            .filter_map(|value| {
+            .map(|value| {
                 let text = value
                     .get("text")
                     .and_then(|v| v.as_str())
@@ -342,7 +341,7 @@ impl RuntimeExtractionService {
                     .and_then(|v| v.as_f64())
                     .map(|f| f as f32)
                     .unwrap_or(0.5);
-                Some(ExtractedClaim {
+                ExtractedClaim {
                     claim_text: text,
                     subject_name: subject,
                     predicate,
@@ -353,7 +352,7 @@ impl RuntimeExtractionService {
                     confidence,
                     evidence_snippet: chunk.to_string(),
                     attributed_to: Some("model-runtime".to_string()),
-                })
+                }
             })
             .collect()
     }

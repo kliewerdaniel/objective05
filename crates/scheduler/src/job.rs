@@ -64,6 +64,12 @@ pub struct SchedulerState {
     pub started_at: DateTime<Utc>,
 }
 
+impl Default for SchedulerState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SchedulerState {
     pub fn new() -> Self {
         Self {

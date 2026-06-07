@@ -190,10 +190,10 @@ fn unavailable() -> Response {
         .into_response()
 }
 
-fn handle(state: &ApiState) -> Result<Arc<ModelRuntimeHandle>, Response> {
+fn handle(state: &ApiState) -> Result<Arc<ModelRuntimeHandle>, Box<Response>> {
     match state.model_runtime.as_ref() {
         Some(handle) => Ok(Arc::clone(handle)),
-        None => Err(unavailable()),
+        None => Err(Box::new(unavailable())),
     }
 }
 
@@ -210,7 +210,7 @@ fn handle(state: &ApiState) -> Result<Arc<ModelRuntimeHandle>, Response> {
 pub async fn get_model_runtime(State(state): State<ApiState>) -> Response {
     let handle = match handle(&state) {
         Ok(h) => h,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let view = handle.snapshot().await;
     let slots = handle.slot_views().await;
@@ -242,7 +242,7 @@ pub async fn get_model_runtime(State(state): State<ApiState>) -> Response {
 pub async fn post_model_runtime_reload(State(state): State<ApiState>) -> Response {
     let handle = match handle(&state) {
         Ok(h) => h,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let view = handle.reload().await;
     let slots = handle.slot_views().await;

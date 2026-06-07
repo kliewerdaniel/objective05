@@ -70,10 +70,10 @@ fn unavailable() -> Response {
         .into_response()
 }
 
-fn host(state: &ApiState) -> Result<Arc<PluginHost<InMemoryMessageBus>>, Response> {
+fn host(state: &ApiState) -> Result<Arc<PluginHost<InMemoryMessageBus>>, Box<Response>> {
     match state.plugin_host.as_ref() {
         Some(host) => Ok(Arc::clone(host)),
-        None => Err(unavailable()),
+        None => Err(Box::new(unavailable())),
     }
 }
 
@@ -110,7 +110,7 @@ fn status_to_response(s: &objective_plugin_host::PluginStatus) -> PluginStatusRe
 pub async fn list_plugins(State(state): State<ApiState>) -> Response {
     let host = match host(&state) {
         Ok(h) => h,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let plugins = host.list().await;
     let total = plugins.len() as u32;
@@ -138,7 +138,7 @@ pub async fn list_plugins(State(state): State<ApiState>) -> Response {
 pub async fn get_plugin(State(state): State<ApiState>, Path(name): Path<String>) -> Response {
     let host = match host(&state) {
         Ok(h) => h,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match host.get(&name).await {
         Some(status) => Json(status_to_response(&status)).into_response(),
@@ -170,7 +170,7 @@ pub async fn get_plugin(State(state): State<ApiState>, Path(name): Path<String>)
 pub async fn restart_plugin(State(state): State<ApiState>, Path(name): Path<String>) -> Response {
     let host = match host(&state) {
         Ok(h) => h,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match host.restart(&name).await {
         Ok(status) => Json(status_to_response(&status)).into_response(),
@@ -212,7 +212,7 @@ pub struct PluginReloadResponse {
 pub async fn reload_plugins(State(state): State<ApiState>) -> Response {
     let host = match host(&state) {
         Ok(h) => h,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let path = std::path::PathBuf::from(".objective/plugins");
     let names = match host.reload(&path).await {

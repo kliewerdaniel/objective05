@@ -47,7 +47,7 @@ Objective bridges this gap with a **third category**: perpetual intelligence. It
 
 ### Prerequisites
 
-- **Rust 1.91.0** (pinned via `rust-toolchain.toml`)
+- **Rust 1.91.0** (pinned via `rust-toolchain.toml`; the `Makefile` prepends the toolchain `bin/` to `$PATH` automatically — `make run` Just Works. To run `cargo` directly with the pinned version, use `PATH="$HOME/.rustup/toolchains/1.91.0-aarch64-apple-darwin/bin:$PATH" cargo`.)
 - **Node 20+** and **npm** (for the dashboard)
 - **macOS 13+** or **Linux** (Ubuntu 22.04+ recommended)
 - **CMake, Clang, libclang** (only if you build with `--features kuzu`)
@@ -55,10 +55,9 @@ Objective bridges this gap with a **third category**: perpetual intelligence. It
 ### Run the daemon
 
 ```bash
-git clone https://github.com/kliewerdaniel/objective05
+git clone <repo-url>
 cd objective05
-cargo run -p objective -- setup   # initialize .objective/ in the current directory
-cargo run -p objective -- serve   # API on http://127.0.0.1:8080
+make run       # or: rustup run 1.91.0 cargo run -p objective -- serve
 ```
 
 The API listens on `http://127.0.0.1:8080`. Verify it with:
@@ -80,11 +79,11 @@ npm run dev    # http://localhost:5173, proxies /api and /ws to the daemon
 ### Common commands
 
 ```bash
-make build     # cargo build --workspace
-make test      # cargo test --workspace
-make fmt       # cargo fmt --all
-make clippy    # cargo clippy --workspace --all-targets -- -D warnings
-make run       # cargo run -p objective -- serve
+make build     # uses rustup-managed cargo (1.91.0) via $PATH
+make test      # same toolchain
+make fmt
+make clippy
+make run       # starts the daemon on http://127.0.0.1:8080
 ```
 
 ### Optional features

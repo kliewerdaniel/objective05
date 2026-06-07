@@ -299,7 +299,7 @@ impl SchedulerService {
             let state = self.state.read().await;
             state
                 .save_to_file(path)
-                .map_err(|e| objective_core::ObjectiveError::Storage(e))
+                .map_err(objective_core::ObjectiveError::Storage)
         } else {
             Ok(())
         }

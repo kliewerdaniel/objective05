@@ -30,6 +30,7 @@ pub struct PipelineWorker<B: MessageBus, R: EventRepository> {
 }
 
 impl<B: MessageBus, R: EventRepository> PipelineWorker<B, R> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         ingestion: IngestionService<RuntimeStore, B>,
         processor: Arc<dyn DocumentProcessor>,
@@ -458,7 +459,7 @@ mod tests {
 
         let events = event_engine.list_events().await.unwrap();
         assert!(
-            events.len() >= 1,
+            !events.is_empty(),
             "event engine should have at least 1 derived event from the seed document"
         );
 
