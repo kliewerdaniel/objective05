@@ -55,8 +55,8 @@ Objective bridges this gap with a **third category**: perpetual intelligence. It
 ### Run the daemon
 
 ```bash
-git clone https://github.com/anomalyco/objective
-cd objective
+git clone https://github.com/kliewerdaniel/objective05
+cd objective05
 cargo run -p objective -- setup   # initialize .objective/ in the current directory
 cargo run -p objective -- serve   # API on http://127.0.0.1:8080
 ```
