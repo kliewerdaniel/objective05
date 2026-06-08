@@ -376,3 +376,192 @@ export interface HealthResponse {
   uptime_secs: number;
   services: Record<string, string>;
 }
+
+// ---- Plugins --------------------------------------------------------------
+
+export type PluginType = 'source' | 'processor' | 'broadcast' | 'notification' | 'embedding' | 'filter';
+export type PluginState = 'discovered' | 'validated' | 'started' | 'ready' | 'running' | 'crashed' | 'stopped' | 'error';
+
+export interface PluginSubscriptions {
+  event_types: string[];
+  entity_types: string[];
+}
+
+export interface PluginStatusResponse {
+  name: string;
+  version: string;
+  plugin_type: PluginType;
+  description: string;
+  state: PluginState;
+  events_handled: number;
+  restart_count: number;
+  last_event_at: string | null;
+  last_error: string | null;
+  started_at: string | null;
+  subscriptions: PluginSubscriptions;
+  capabilities: string[];
+}
+
+export interface PluginsListResponse {
+  plugins: PluginStatusResponse[];
+  total: number;
+}
+
+export interface PluginReloadResponse {
+  reloaded: number;
+  plugin_names: string[];
+}
+
+export interface PluginErrorResponse {
+  error: string;
+  message: string;
+}
+
+// ---- Model Runtime --------------------------------------------------------
+
+export interface SlotSummary {
+  path: string;
+  path_exists: boolean;
+}
+
+export interface StrategyRow {
+  kind: string;
+  slot: string;
+  fallback: string;
+}
+
+export type ModelSlotPhase = 'not_loaded' | 'loading' | 'ready' | 'busy' | 'draining' | 'error' | 'unloading';
+
+export interface ModelSlotBusyData {
+  active: number;
+  queued: number;
+}
+
+export interface ModelSlotDrainingData {
+  active: number;
+}
+
+export interface ModelSlotErrorData {
+  message: string;
+}
+
+export interface ModelSlotTransition {
+  from: Record<string, unknown>;
+  to: Record<string, unknown>;
+  at: string;
+  reason: string | null;
+}
+
+export interface SlotViewResponse {
+  model: string;
+  path: string | null;
+  state: Record<string, unknown>;
+  max_concurrency: number;
+  active: number;
+  queued: number;
+  last_error: string | null;
+  last_used_at: string | null;
+  transitions: ModelSlotTransition[];
+}
+
+export interface LatencyHistogram {
+  count: number;
+  sum_ms: number;
+  min_ms: number;
+  max_ms: number;
+  p50_ms: number;
+  p95_ms: number;
+  p99_ms: number;
+  timeouts: number;
+  errors: number;
+  buckets: number[];
+}
+
+export interface RuntimeMetricsSummary {
+  total_calls: number;
+  total_fallbacks: number;
+  by_kind: Record<string, LatencyHistogram>;
+  by_model: Record<string, LatencyHistogram>;
+}
+
+export interface ModelRuntimeResponse {
+  provider: string;
+  embedding_slot: SlotSummary | null;
+  extraction_llm_slot: SlotSummary | null;
+  strategy: StrategyRow[];
+  chunk_timeout_ms: number;
+  queue_timeout_ms: number;
+  context_window: number;
+  max_concurrency: number;
+  slots: SlotViewResponse[];
+  metrics: RuntimeMetricsSummary | null;
+}
+
+export interface ModelRuntimeReloadResponse {
+  reloaded: boolean;
+  strategy_entries: number;
+  provider: string;
+  view: ModelRuntimeResponse;
+}
+
+export interface ModelRuntimeErrorResponse {
+  error: string;
+  message: string;
+}
+
+// ---- Derived Events Top ---------------------------------------------------
+
+export interface DerivedEventsResponse {
+  events: DerivedEvent[];
+  count: number;
+}
+
+// ---- Recovery -------------------------------------------------------------
+
+export type ServiceStatus = 'healthy' | 'stalled' | 'degraded' | 'recovering' | 'recovered';
+
+export interface RecoveryEvent {
+  event_type: string;
+  timestamp: string;
+  reason: string;
+  status: ServiceStatus;
+  previous_status: ServiceStatus | null;
+}
+
+export interface RecoveryState {
+  service_name: string;
+  current_status: ServiceStatus;
+  last_check_at: string;
+  last_heartbeat_at: string | null;
+  last_crash_at: string | null;
+  last_recovery_at: string | null;
+  checks_performed: number;
+  crashes_detected: number;
+  recoveries_performed: number;
+  history: RecoveryEvent[];
+}
+
+export interface RecoveryResponse {
+  state: RecoveryState | null;
+  message: string;
+}
+
+export interface RecoveryCheck {
+  status: ServiceStatus;
+  reason: string;
+  stalled: boolean;
+  errors_in_window: number;
+  seconds_since_activity: number;
+  published_crash: boolean;
+  published_recovered: boolean;
+  published_heartbeat: boolean;
+  timestamp: string;
+}
+
+export interface RecoveryCheckResponse {
+  check: RecoveryCheck;
+}
+
+export interface RecoveryErrorResponse {
+  error: string;
+}

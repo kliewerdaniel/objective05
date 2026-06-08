@@ -30,6 +30,14 @@ import type {
   EventResolveResponse,
   SearchResponse,
   ConfigResponse,
+  PluginsListResponse,
+  PluginStatusResponse,
+  PluginReloadResponse,
+  ModelRuntimeResponse,
+  ModelRuntimeReloadResponse,
+  DerivedEventsResponse,
+  RecoveryResponse,
+  RecoveryCheckResponse,
 } from './types';
 
 const API_BASE = '/api/v1';
@@ -135,6 +143,25 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(req ?? {}),
     }),
+
+  // Plugins
+  listPlugins: () => request<PluginsListResponse>('/plugins'),
+  getPlugin: (name: string) => request<PluginStatusResponse>(`/plugins/${encodeURIComponent(name)}`),
+  restartPlugin: (name: string) =>
+    request<PluginStatusResponse>(`/plugins/${encodeURIComponent(name)}/restart`, { method: 'POST' }),
+  reloadPlugins: () => request<PluginReloadResponse>('/plugins/reload', { method: 'POST' }),
+
+  // Model runtime
+  getModelRuntime: () => request<ModelRuntimeResponse>('/model-runtime'),
+  reloadModelRuntime: () => request<ModelRuntimeReloadResponse>('/model-runtime/reload', { method: 'POST' }),
+
+  // Derived events top
+  getTopDerivedEvents: (limit = 50) =>
+    request<DerivedEventsResponse>(`/derived-events/top?limit=${limit}`),
+
+  // Recovery
+  getRecoveryState: () => request<RecoveryResponse>('/recovery'),
+  runRecoveryCheck: () => request<RecoveryCheckResponse>('/recovery/check', { method: 'POST' }),
 
   // Search / config
   search: (q: string, limit = 25) =>
