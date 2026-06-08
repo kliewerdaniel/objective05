@@ -1,12 +1,3 @@
-//! Stub implementation of the LanceDB-backed vector repository.
-//!
-//! The full integration with LanceDB is in progress. The current
-//! implementation provides a thread-safe in-memory vector index that
-//! satisfies the [`VectorRepository`] trait so the rest of the
-//! application can be wired up against the documented interface.
-//! When the LanceDB schema migrations and query helpers stabilize,
-//! this module will be replaced with the real LanceDB implementation.
-
 use std::collections::HashMap;
 use std::sync::RwLock;
 
@@ -26,7 +17,7 @@ impl LanceVectorStore {
     pub async fn new<P: AsRef<std::path::Path>>(_path: P, _table_name: &str) -> Result<Self> {
         warn!(
             "LanceVectorStore is currently an in-memory stub; the path and table name are ignored. \
-             Replace with the LanceDB-backed implementation once the schema migrations land."
+             Enable the `lancedb` feature for the real LanceDB-backed implementation."
         );
         Ok(Self::default())
     }

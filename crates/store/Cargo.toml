@@ -14,11 +14,16 @@ default = []
 # Optionally with parallel C++ build:
 #   CMAKE_BUILD_PARALLEL_LEVEL=$(sysctl -n hw.ncpu) cargo test -p objective-store --features kuzu
 kuzu = ["dep:kuzu"]
+# Real LanceDB vector store backend. When disabled, an in-memory stub
+# preserves the VectorRepository contract. Enable with:
+#   cargo test -p objective-store --features lancedb
+lancedb = ["dep:lancedb", "dep:arrow-array", "dep:arrow-schema"]
 
 [dependencies]
 async-trait.workspace = true
 chrono.workspace = true
 flate2.workspace = true
+futures.workspace = true
 objective-core = { path = "../core" }
 serde.workspace = true
 serde_json.workspace = true
@@ -26,6 +31,9 @@ tokio.workspace = true
 tracing.workspace = true
 ulid.workspace = true
 utoipa.workspace = true
+lancedb = { version = "0.30", optional = true }
+arrow-array = { version = "58", optional = true }
+arrow-schema = { version = "58", optional = true }
 # kuzu brings in `cxx` and `cxx-build` transitively; the workspace
 # `Cargo.toml` pins both to =1.0.138 so the cxx-bridge symbol suffix
 # generated at build time matches the one cxx (runtime) looks up.
