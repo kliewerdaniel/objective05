@@ -1,8 +1,9 @@
-use std::{collections::HashMap, io::Cursor, time::Instant};
+use std::{collections::HashMap, io::Cursor, sync::Arc, time::Instant};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use feed_rs::model::Entry;
+use objective_asr::AsrEngine;
 use objective_core::{
     traits::SourceAdapter,
     types::{BodyFormat, HealthStatus, PollResult, RateLimitConfig, RawDocument},
@@ -17,13 +18,31 @@ use crate::normalizer::{DocumentInput, DocumentNormalizer};
 /// Extends the standard RSS adapter to extract audio-specific metadata
 /// such as duration, enclosure URL, and episode number. Each episode
 /// is converted to a normalized [`RawDocument`].
-#[derive(Debug, Clone)]
+///
+/// When `asr_engine` is configured and `download_audio` is true,
+/// the adapter downloads each episode's audio and transcribes it
+/// via the ASR engine, using the transcript as the document body.
+/// Otherwise it falls back to show notes / description text.
+#[derive(Clone)]
 pub struct PodcastSourceAdapter {
     name: String,
     feed_url: String,
     normalizer: DocumentNormalizer,
     client: reqwest::Client,
     fixture_xml: Option<String>,
+    asr_engine: Option<Arc<dyn AsrEngine>>,
+    download_audio: bool,
+}
+
+impl std::fmt::Debug for PodcastSourceAdapter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PodcastSourceAdapter")
+            .field("name", &self.name)
+            .field("feed_url", &self.feed_url)
+            .field("download_audio", &self.download_audio)
+            .field("asr_engine", &self.asr_engine.is_some())
+            .finish()
+    }
 }
 
 impl PodcastSourceAdapter {
@@ -35,7 +54,16 @@ impl PodcastSourceAdapter {
             normalizer: DocumentNormalizer,
             client: reqwest::Client::new(),
             fixture_xml: None,
+            asr_engine: None,
+            download_audio: false,
         }
+    }
+
+    /// Attach an ASR engine for audio transcription.
+    pub fn with_asr(mut self, engine: Arc<dyn AsrEngine>, download_audio: bool) -> Self {
+        self.asr_engine = Some(engine);
+        self.download_audio = download_audio;
+        self
     }
 
     /// Build an adapter that returns a pre-canned XML payload (for tests).
@@ -46,6 +74,8 @@ impl PodcastSourceAdapter {
             normalizer: DocumentNormalizer,
             client: reqwest::Client::new(),
             fixture_xml: Some(xml.into()),
+            asr_engine: None,
+            download_audio: false,
         }
     }
 
@@ -87,7 +117,43 @@ impl PodcastSourceAdapter {
             })
     }
 
-    fn parse_documents(&self, bytes: &[u8], cursor: Option<String>) -> Result<Vec<RawDocument>> {
+    /// Download audio from the enclosure URL and transcribe it.
+    async fn download_and_transcribe(&self, enclosure_url: &str) -> Result<String> {
+        let response = self
+            .client
+            .get(enclosure_url)
+            .header(
+                reqwest::header::USER_AGENT,
+                "Objective/0.1 (local intelligence system)",
+            )
+            .send()
+            .await
+            .map_err(|e| ObjectiveError::Source(format!("failed to download audio: {e}")))?;
+
+        if !response.status().is_success() {
+            return Err(ObjectiveError::Source(format!(
+                "audio download returned HTTP {}",
+                response.status()
+            )));
+        }
+
+        let audio_bytes = response
+            .bytes()
+            .await
+            .map_err(|e| ObjectiveError::Source(format!("failed to read audio: {e}")))?
+            .to_vec();
+
+        if let Some(ref engine) = self.asr_engine {
+            let transcription = engine.transcribe(&audio_bytes).await?;
+            Ok(transcription.text)
+        } else {
+            Err(ObjectiveError::Config(
+                "ASR engine not configured but download_audio is enabled".to_string(),
+            ))
+        }
+    }
+
+    async fn parse_documents(&self, bytes: &[u8], cursor: Option<String>) -> Result<Vec<RawDocument>> {
         let feed = feed_rs::parser::parse(Cursor::new(bytes)).map_err(|error| {
             ObjectiveError::Source(format!("failed to parse podcast feed: {error}"))
         })?;
@@ -107,7 +173,7 @@ impl PodcastSourceAdapter {
                 }
             }
 
-            let input = document_input_from_entry(
+            let mut input = document_input_from_entry(
                 &self.name,
                 &feed
                     .title
@@ -116,6 +182,33 @@ impl PodcastSourceAdapter {
                     .unwrap_or_default(),
                 entry,
             );
+
+            // If ASR is configured and there's an audio enclosure,
+            // download and transcribe to produce the document body.
+            if self.download_audio {
+                let enclosure_url = input
+                    .metadata
+                    .get("enclosure_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                if let Some(url) = enclosure_url {
+                    match self.download_and_transcribe(&url).await {
+                        Ok(transcript) => {
+                            input.body = transcript;
+                            input.body_format = objective_core::types::BodyFormat::PlainText;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                url = %url,
+                                error = %e,
+                                "ASR transcription failed, falling back to show notes"
+                            );
+                        }
+                    }
+                }
+            }
+
             documents.push(self.normalizer.normalize(input)?);
         }
 
@@ -250,7 +343,7 @@ impl SourceAdapter for PodcastSourceAdapter {
         self.validate()?;
         let started = Instant::now();
         let bytes = self.fetch_feed_bytes().await?;
-        let documents = self.parse_documents(&bytes, cursor)?;
+        let documents = self.parse_documents(&bytes, cursor).await?;
         let new_cursor = documents
             .iter()
             .filter_map(|document| document.published_at)
@@ -267,7 +360,7 @@ impl SourceAdapter for PodcastSourceAdapter {
 
     async fn fetch_one(&self, external_id: &str) -> Result<RawDocument> {
         let bytes = self.fetch_feed_bytes().await?;
-        self.parse_documents(&bytes, None)?
+        self.parse_documents(&bytes, None).await?
             .into_iter()
             .find(|document| document.external_id == external_id)
             .ok_or_else(|| {

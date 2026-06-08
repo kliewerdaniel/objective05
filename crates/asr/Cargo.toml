@@ -1,0 +1,20 @@
+[package]
+name = "objective-asr"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["asr-stub"]
+asr-stub = []
+whisper = []
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+objective-core = { path = "../core" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true

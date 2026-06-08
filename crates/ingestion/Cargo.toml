@@ -9,6 +9,7 @@ repository.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
 feed-rs.workspace = true
+objective-asr = { path = "../asr" }
 objective-core = { path = "../core" }
 regex.workspace = true
 reqwest.workspace = true
