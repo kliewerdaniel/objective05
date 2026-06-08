@@ -7,7 +7,7 @@
 //   - the connection indicator shows "Live" when `wsConnected`
 //   - the sync button calls `fetchData` and reflects `loading`
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Header } from './Header';
 import { useFeedStore } from '../../store/feedStore';
