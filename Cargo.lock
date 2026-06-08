@@ -4186,6 +4186,7 @@ dependencies = [
  "axum",
  "chrono",
  "objective-api-gateway",
+ "objective-broadcast",
  "objective-core",
  "objective-correlation",
  "objective-extraction",
@@ -4228,6 +4229,25 @@ dependencies = [
  "tracing",
  "ulid",
  "utoipa",
+]
+
+[[package]]
+name = "objective-broadcast"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "objective-core",
+ "objective-correlation",
+ "objective-message-bus",
+ "objective-model-runtime",
+ "objective-store",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "ulid",
 ]
 
 [[package]]

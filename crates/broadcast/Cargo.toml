@@ -1,31 +1,21 @@
 [package]
-name = "objective"
+name = "objective-broadcast"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
 [dependencies]
-anyhow.workspace = true
-axum.workspace = true
+async-trait.workspace = true
 chrono.workspace = true
-objective-api-gateway = { path = "../api-gateway" }
-objective-broadcast = { path = "../broadcast" }
 objective-core = { path = "../core" }
 objective-correlation = { path = "../correlation" }
-objective-extraction = { path = "../extraction" }
-objective-ingestion = { path = "../ingestion" }
 objective-message-bus = { path = "../message-bus" }
 objective-model-runtime = { path = "../model-runtime" }
-objective-plugin-host = { path = "../plugin-host" }
-objective-scheduler = { path = "../scheduler" }
 objective-store = { path = "../store" }
+serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-
-[dev-dependencies]
-objective-core = { path = "../core" }
-serde_json.workspace = true
-tempfile.workspace = true
 ulid.workspace = true

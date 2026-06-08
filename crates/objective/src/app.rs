@@ -1,6 +1,9 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use objective_api_gateway::{build_router, ApiState, WebSocketHub};
+use objective_broadcast::{
+    BroadcastCollector, BroadcastGenerator, BroadcastService, FileBroadcastRepository,
+};
 use objective_core::{
     traits::{DocumentProcessor, DocumentRepository, ExtractionRepository, GraphRepository},
     ModelRuntimeConfig, ObjectiveConfig,
@@ -51,6 +54,8 @@ pub struct AppState {
     pub plugin_host: Arc<PluginHost<InMemoryMessageBus>>,
     pub processor: Arc<dyn DocumentProcessor>,
     pub model_runtime_config: ModelRuntimeConfig,
+    /// File-backed broadcast repository with auto-persistence.
+    pub broadcast_repository: Arc<FileBroadcastRepository>,
     /// Handle that backs the `/api/v1/model-runtime` routes.
     /// Populated only for `ModelRuntimeConfig::Local`. The
     /// `swappable` inner `Arc<RwLock<Arc<dyn ModelRuntime>>>`
@@ -76,6 +81,9 @@ impl AppState {
         let graph = Arc::new(KuzuGraphStore::new(&config.storage.graph_path)?);
         let vectors =
             Arc::new(LanceVectorStore::new(&config.storage.vector_path, "document_vectors").await?);
+
+        let broadcasts_path = config.data_root.join("state").join("broadcasts.json");
+        let broadcast_repository = Arc::new(FileBroadcastRepository::new(broadcasts_path));
 
         let event_path = config.data_root.join("state").join("events.json");
         let event_repository = Arc::new(FileEventRepository::new(&event_path));
@@ -212,6 +220,7 @@ impl AppState {
             processor,
             model_runtime_config,
             model_runtime_handle,
+            broadcast_repository,
         })
     }
 
@@ -415,6 +424,20 @@ pub async fn serve(config: ObjectiveConfig) -> anyhow::Result<()> {
     tokio::spawn(async move {
         if let Err(e) = pipeline.run().await {
             tracing::error!("pipeline worker error: {e}");
+        }
+    });
+
+    // Start broadcast service in background
+    let broadcast_runtime = runtime_for(&config.model_runtime).ok();
+    let broadcast_service = BroadcastService::new(
+        BroadcastCollector::new(Arc::clone(&state.event_repository) as Arc<dyn objective_correlation::EventRepository>),
+        BroadcastGenerator::new(broadcast_runtime),
+        Arc::clone(&state.broadcast_repository) as Arc<_>,
+        Arc::clone(&state.bus) as Arc<_>,
+    );
+    tokio::spawn(async move {
+        if let Err(e) = broadcast_service.run().await {
+            tracing::error!("broadcast service error: {e}");
         }
     });
 
