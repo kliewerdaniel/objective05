@@ -1,6 +1,7 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use objective_api_gateway::{build_router, ApiState, WebSocketHub};
+use objective_audio::{AudioService, FileAudioRepository};
 use objective_broadcast::{
     BroadcastCollector, BroadcastGenerator, BroadcastService, FileBroadcastRepository,
 };
@@ -56,6 +57,8 @@ pub struct AppState {
     pub model_runtime_config: ModelRuntimeConfig,
     /// File-backed broadcast repository with auto-persistence.
     pub broadcast_repository: Arc<FileBroadcastRepository>,
+    /// File-backed audio repository with auto-persistence.
+    pub audio_repository: Arc<FileAudioRepository>,
     /// Handle that backs the `/api/v1/model-runtime` routes.
     /// Populated only for `ModelRuntimeConfig::Local`. The
     /// `swappable` inner `Arc<RwLock<Arc<dyn ModelRuntime>>>`
@@ -84,6 +87,8 @@ impl AppState {
 
         let broadcasts_path = config.data_root.join("state").join("broadcasts.json");
         let broadcast_repository = Arc::new(FileBroadcastRepository::new(broadcasts_path));
+        let audio_path = config.data_root.join("state").join("audio.json");
+        let audio_repository = Arc::new(FileAudioRepository::new(audio_path));
 
         let event_path = config.data_root.join("state").join("events.json");
         let event_repository = Arc::new(FileEventRepository::new(&event_path));
@@ -221,6 +226,7 @@ impl AppState {
             model_runtime_config,
             model_runtime_handle,
             broadcast_repository,
+            audio_repository,
         })
     }
 
@@ -353,7 +359,10 @@ pub async fn serve(config: ObjectiveConfig) -> anyhow::Result<()> {
         .with_recovery(Arc::clone(&state.recovery))
         .with_websocket_hub(state.websocket_hub.clone())
         .with_source_registry(Arc::clone(&state.source_registry))
-        .with_plugin_host(Arc::clone(&state.plugin_host) as Arc<_>);
+        .with_plugin_host(Arc::clone(&state.plugin_host) as Arc<_>)
+        .with_broadcast_repository(
+            Arc::clone(&state.broadcast_repository) as Arc<dyn objective_broadcast::BroadcastRepository>,
+        );
 
     let api_state = if let Some(handle) = state.model_runtime_handle.as_ref() {
         api_state.with_model_runtime(Arc::clone(handle))
@@ -438,6 +447,20 @@ pub async fn serve(config: ObjectiveConfig) -> anyhow::Result<()> {
     tokio::spawn(async move {
         if let Err(e) = broadcast_service.run().await {
             tracing::error!("broadcast service error: {e}");
+        }
+    });
+
+    // Start audio service in background
+    let audio_dir = config.data_root.join("audio");
+    std::fs::create_dir_all(&audio_dir)?;
+    let audio_service = AudioService::new_stub(
+        Arc::clone(&state.audio_repository) as Arc<_>,
+        Arc::clone(&state.bus) as Arc<_>,
+        audio_dir,
+    );
+    tokio::spawn(async move {
+        if let Err(e) = audio_service.run().await {
+            tracing::error!("audio service error: {e}");
         }
     });
 

@@ -3,6 +3,8 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use objective_core::traits::MessageBus;
+use objective_core::types::EventEnvelope;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -29,6 +31,31 @@ impl From<BroadcastRecord> for Broadcast {
             summary: record.summary,
             body_markdown: record.body_markdown,
             status: record.status,
+            event_count: record.event_count,
+            created_at: record.created_at,
+            updated_at: record.updated_at,
+        }
+    }
+}
+
+fn convert_status(s: objective_broadcast::types::BroadcastStatus) -> BroadcastStatus {
+    use objective_broadcast::types::BroadcastStatus as S;
+    match s {
+        S::Draft => BroadcastStatus::Draft,
+        S::Ready => BroadcastStatus::Ready,
+        S::Published => BroadcastStatus::Published,
+        S::Archived => BroadcastStatus::Archived,
+    }
+}
+
+impl From<objective_broadcast::types::BroadcastRecord> for Broadcast {
+    fn from(record: objective_broadcast::types::BroadcastRecord) -> Self {
+        Self {
+            id: record.id,
+            title: record.title,
+            summary: record.summary,
+            body_markdown: record.body_markdown,
+            status: convert_status(record.status),
             event_count: record.event_count,
             created_at: record.created_at,
             updated_at: record.updated_at,
@@ -72,9 +99,20 @@ pub struct BroadcastGenerateRequest {
     responses((status = 200, description = "List recent broadcasts", body = BroadcastsResponse))
 )]
 pub async fn list_broadcasts(State(state): State<ApiState>) -> Json<BroadcastsResponse> {
-    let records = state.auxiliary.broadcasts.list().await;
-    let total = records.len();
-    let broadcasts: Vec<Broadcast> = records.into_iter().map(Into::into).collect();
+    let broadcasts: Vec<Broadcast> = if let Some(ref repo) = state.broadcast_repository {
+        let records = repo.list().await.unwrap_or_default();
+        records.into_iter().map(Into::into).collect()
+    } else {
+        state
+            .auxiliary
+            .broadcasts
+            .list()
+            .await
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    };
+    let total = broadcasts.len();
     Json(BroadcastsResponse { broadcasts, total })
 }
 
@@ -86,6 +124,18 @@ pub async fn list_broadcasts(State(state): State<ApiState>) -> Json<BroadcastsRe
     )
 )]
 pub async fn latest_broadcast(State(state): State<ApiState>) -> Json<BroadcastLatestResponse> {
+    if let Some(ref repo) = state.broadcast_repository {
+        if let Some(broadcast) = repo.latest().await.ok().flatten() {
+            return Json(BroadcastLatestResponse {
+                broadcast: Some(broadcast.into()),
+                message: "ok".to_string(),
+            });
+        }
+        return Json(BroadcastLatestResponse {
+            broadcast: None,
+            message: "no broadcasts have been generated yet".to_string(),
+        });
+    }
     match state.auxiliary.broadcasts.latest().await {
         Some(broadcast) => Json(BroadcastLatestResponse {
             broadcast: Some(broadcast.into()),
@@ -111,6 +161,23 @@ pub async fn get_broadcast(
     State(state): State<ApiState>,
     Path(id): Path<String>,
 ) -> Result<Json<BroadcastDetailResponse>, (StatusCode, Json<BroadcastError>)> {
+    if let Some(ref repo) = state.broadcast_repository {
+        match repo.get(&id).await.ok().flatten() {
+            Some(broadcast) => {
+                return Ok(Json(BroadcastDetailResponse {
+                    broadcast: broadcast.into(),
+                }))
+            }
+            None => {
+                return Err((
+                    StatusCode::NOT_FOUND,
+                    Json(BroadcastError {
+                        error: format!("broadcast not found: {id}"),
+                    }),
+                ))
+            }
+        }
+    }
     match state.auxiliary.broadcasts.get(&id).await {
         Some(broadcast) => Ok(Json(BroadcastDetailResponse {
             broadcast: broadcast.into(),
@@ -136,6 +203,44 @@ pub async fn generate_broadcast(
     State(state): State<ApiState>,
     Json(request): Json<BroadcastGenerateRequest>,
 ) -> (StatusCode, Json<BroadcastDetailResponse>) {
+    // If a real broadcast repository is wired (with the background service
+    // running), emit a bus event so the service generates it asynchronously.
+    if let Some(ref _repo) = state.broadcast_repository {
+        let _ = state
+            .bus
+            .publish(
+                "broadcast.generate_immediate",
+                EventEnvelope::new(
+                    "broadcast.generate_immediate",
+                    "api",
+                    serde_json::json!({
+                        "title": request.title,
+                        "focus": request.focus,
+                    }),
+                ),
+            )
+            .await;
+        return (
+            StatusCode::ACCEPTED,
+            Json(BroadcastDetailResponse {
+                broadcast: Broadcast {
+                    id: String::new(),
+                    title: request
+                        .title
+                        .clone()
+                        .unwrap_or_else(|| "Generating...".to_string()),
+                    summary: "Broadcast generation queued asynchronously.".to_string(),
+                    body_markdown: String::new(),
+                    status: BroadcastStatus::Draft,
+                    event_count: 0,
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                },
+            }),
+        );
+    }
+
+    // Fall back to in-memory store.
     let now = chrono::Utc::now();
     let id = new_id();
     let title = request

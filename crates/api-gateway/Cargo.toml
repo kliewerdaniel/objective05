@@ -9,6 +9,7 @@ repository.workspace = true
 axum.workspace = true
 chrono.workspace = true
 futures.workspace = true
+objective-broadcast = { path = "../broadcast" }
 objective-core = { path = "../core" }
 objective-correlation = { path = "../correlation" }
 objective-ingestion = { path = "../ingestion" }

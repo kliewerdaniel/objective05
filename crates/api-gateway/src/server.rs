@@ -4,6 +4,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use objective_broadcast::BroadcastRepository;
 use objective_core::traits::{DocumentRepository, ExtractionRepository};
 use objective_core::ObjectiveConfig;
 use objective_correlation::EventRepository;
@@ -48,6 +49,7 @@ pub struct ApiState {
     /// `Arc<dyn ModelRuntime>` atomically.
     pub model_runtime: Option<Arc<ModelRuntimeHandle>>,
     pub auxiliary: AuxiliaryStores,
+    pub broadcast_repository: Option<Arc<dyn BroadcastRepository>>,
     pub config: Option<ObjectiveConfig>,
 }
 
@@ -121,6 +123,7 @@ impl ApiState {
             plugin_host: None,
             model_runtime: None,
             auxiliary: AuxiliaryStores::new(),
+            broadcast_repository: None,
             config: None,
         }
     }
@@ -178,6 +181,11 @@ impl ApiState {
     /// contradictions). Useful for tests that need to pre-seed data.
     pub fn with_auxiliary(mut self, auxiliary: AuxiliaryStores) -> Self {
         self.auxiliary = auxiliary;
+        self
+    }
+
+    pub fn with_broadcast_repository(mut self, repo: Arc<dyn BroadcastRepository>) -> Self {
+        self.broadcast_repository = Some(repo);
         self
     }
 

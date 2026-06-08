@@ -11,6 +11,7 @@ members = [
     "crates/api-gateway",
     "crates/model-runtime",
     "crates/broadcast",
+    "crates/audio",
     "crates/objective",
 ]
 resolver = "2"

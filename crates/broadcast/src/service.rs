@@ -89,6 +89,8 @@ impl BroadcastService {
                     "title": record.title,
                     "status": "ready",
                     "event_count": record.event_count,
+                    "body_markdown": record.body_markdown,
+                    "summary": record.summary,
                 })),
             )
             .await;

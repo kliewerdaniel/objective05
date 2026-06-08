@@ -4186,6 +4186,7 @@ dependencies = [
  "axum",
  "chrono",
  "objective-api-gateway",
+ "objective-audio",
  "objective-broadcast",
  "objective-core",
  "objective-correlation",
@@ -4210,6 +4211,7 @@ dependencies = [
  "axum",
  "chrono",
  "futures",
+ "objective-broadcast",
  "objective-core",
  "objective-correlation",
  "objective-extraction",
@@ -4229,6 +4231,20 @@ dependencies = [
  "tracing",
  "ulid",
  "utoipa",
+]
+
+[[package]]
+name = "objective-audio"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "objective-core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "ulid",
 ]
 
 [[package]]
