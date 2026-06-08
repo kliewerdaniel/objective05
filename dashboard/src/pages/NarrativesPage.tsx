@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useFeedStore } from '../store/feedStore';
 import { useUiStore } from '../store/uiStore';
 import { api } from '../api/client';
-import { Layers, AlertTriangle, Flame } from 'lucide-react';
+import { Stack, Warning, Flame } from '@phosphor-icons/react';
 
 export const NarrativesPage: React.FC = () => {
   const { narratives, contradictions } = useFeedStore();
@@ -25,8 +25,8 @@ export const NarrativesPage: React.FC = () => {
   };
 
   const getStrengthColor = (strength: number) => {
-    if (strength >= 0.75) return 'var(--accent-primary)';
-    if (strength >= 0.5) return 'var(--accent-secondary)';
+    if (strength >= 0.75) return 'var(--accent-blue)';
+    if (strength >= 0.5) return 'var(--accent-blue)';
     return 'var(--text-muted)';
   };
 
@@ -39,19 +39,19 @@ export const NarrativesPage: React.FC = () => {
   return (
     <div className="narratives-container animate-fade-in">
       {/* Sub tabs */}
-      <div className="sub-tab-bar glass-card">
+      <div className="sub-tab-bar">
         <button
           onClick={() => setActiveSubTab('narratives')}
           className={`sub-tab-btn ${activeSubTab === 'narratives' ? 'active' : ''}`}
         >
-          <Layers size={16} />
+            <Stack size={16} />
           Narrative Story Threads ({narratives.length})
         </button>
         <button
           onClick={() => setActiveSubTab('contradictions')}
           className={`sub-tab-btn ${activeSubTab === 'contradictions' ? 'active' : ''}`}
         >
-          <AlertTriangle size={16} />
+          <Warning size={16} />
           Contradiction Detector ({contradictions.length})
         </button>
       </div>
@@ -60,8 +60,8 @@ export const NarrativesPage: React.FC = () => {
       {activeSubTab === 'narratives' && (
         <div className="narratives-section">
           {narratives.length === 0 ? (
-            <div className="empty-state glass-card">
-              <Layers size={48} className="text-muted" />
+            <div className="empty-state">
+              <Stack size={48} className="text-muted" />
               <p className="heading-md">No narratives tracked yet</p>
               <p className="text-muted">The narrative engine groups related events over time into macro trends.</p>
             </div>
@@ -71,7 +71,7 @@ export const NarrativesPage: React.FC = () => {
                 <div
                   key={n.id}
                   onClick={() => openDetail('narrative', n.id)}
-                  className="narrative-card glass-card"
+                  className="narrative-card"
                 >
                   <div className="n-card-header">
                     <span className="badge badge-purple">{n.status}</span>
@@ -114,15 +114,15 @@ export const NarrativesPage: React.FC = () => {
       {activeSubTab === 'contradictions' && (
         <div className="contradictions-section">
           {contradictions.length === 0 ? (
-            <div className="empty-state glass-card">
-              <AlertTriangle size={48} className="text-muted" />
+            <div className="empty-state">
+              <Warning size={48} className="text-muted" />
               <p className="heading-md">No contradictions detected</p>
               <p className="text-muted">Objective continuously compares assertions. Agreement is high across current inputs.</p>
             </div>
           ) : (
             <div className="contradiction-list">
               {contradictions.map((c) => (
-                <div key={c.id} className="contra-card glass-panel">
+                <div key={c.id} className="contra-card">
                   <div className="contra-header">
                     <div className="contra-entity">
                       <Flame size={16} className="text-danger" />
@@ -200,8 +200,8 @@ export const NarrativesPage: React.FC = () => {
         }
 
         .sub-tab-btn.active {
-          background: rgba(139, 92, 246, 0.08);
-          color: var(--accent-primary);
+          background: rgba(0, 122, 255, 0.08);
+          color: var(--accent-blue);
         }
 
         /* Narratives */
@@ -261,7 +261,7 @@ export const NarrativesPage: React.FC = () => {
         }
 
         .n-title {
-          font-family: var(--font-display);
+          font-family: var(--font-mono);
           font-size: 1.2rem;
           font-weight: 600;
           color: var(--text-primary);
@@ -277,7 +277,7 @@ export const NarrativesPage: React.FC = () => {
         .n-footer {
           display: flex;
           gap: 1.5rem;
-          border-top: 1px solid rgba(255, 255, 255, 0.04);
+          border-top: 1px solid var(--border-color);
           padding-top: 0.75rem;
           font-size: 0.75rem;
           color: var(--text-muted);
@@ -308,7 +308,7 @@ export const NarrativesPage: React.FC = () => {
           align-items: center;
           flex-wrap: wrap;
           gap: 0.5rem;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+          border-bottom: 1px solid var(--border-color);
           padding-bottom: 0.75rem;
         }
 
@@ -364,11 +364,11 @@ export const NarrativesPage: React.FC = () => {
         }
 
         .claim-a::before {
-          background: var(--accent-primary);
+          background: var(--accent-blue);
         }
 
         .claim-b::before {
-          background: var(--accent-secondary);
+          background: var(--color-info);
         }
 
         .claim-label {

@@ -1,7 +1,7 @@
 import React from 'react';
 import { useUiStore } from '../../store/uiStore';
 import { useFeedStore } from '../../store/feedStore';
-import { X, User, MessageSquare, Tag, Globe } from 'lucide-react';
+import { X, User, ChatDots, Tag, Globe } from '@phosphor-icons/react';
 
 export const DetailDrawer: React.FC = () => {
   const { activeDetailId, activeDetailType, closeDetail, openDetail } = useUiStore();
@@ -173,7 +173,7 @@ export const DetailDrawer: React.FC = () => {
             <div className="drawer-meta mb-4">
               <span className="badge badge-purple">{ent.type}</span>
               <span className="meta-item">
-                <MessageSquare size={13} /> Mentions: {ent.mentionsCount}
+                <ChatDots size={13} /> Mentions: {ent.mentionsCount}
               </span>
             </div>
 
@@ -202,7 +202,7 @@ export const DetailDrawer: React.FC = () => {
 
   return (
     <div className="drawer-overlay" onClick={closeDetail}>
-      <div className="drawer-sheet glass-panel" onClick={(e) => e.stopPropagation()}>
+      <div className="drawer-sheet" onClick={(e) => e.stopPropagation()}>
         <div className="drawer-header">
           <span className="drawer-type-label">{activeDetailType} details</span>
           <button onClick={closeDetail} className="close-btn">
@@ -217,25 +217,20 @@ export const DetailDrawer: React.FC = () => {
         .drawer-overlay {
           position: fixed;
           inset: 0;
-          background: rgba(0, 0, 0, 0.4);
-          backdrop-filter: blur(4px);
+          background: rgba(0, 0, 0, 0.6);
           z-index: 100;
           display: flex;
           justify-content: flex-end;
-          animation: fadeInOverlay 0.2s ease-out;
         }
 
         .drawer-sheet {
           width: 500px;
           height: 100%;
-          border-radius: 0 !important;
-          border-top: none;
-          border-bottom: none;
-          border-right: none;
+          background: var(--bg-secondary);
+          border-left: 1px solid var(--border-color);
           display: flex;
           flex-direction: column;
-          box-shadow: -10px 0 30px rgba(0, 0, 0, 0.2);
-          animation: slideInSheet 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+          padding: 1.25rem 1.5rem;
         }
 
         @media (max-width: 640px) {
@@ -248,22 +243,22 @@ export const DetailDrawer: React.FC = () => {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          padding-bottom: 1rem;
+          padding-bottom: 0.75rem;
           border-bottom: 1px solid var(--border-color);
         }
 
         .drawer-type-label {
-          font-size: 0.75rem;
-          font-weight: 700;
+          font-size: 0.7rem;
+          font-weight: 600;
           text-transform: uppercase;
-          letter-spacing: 0.08em;
-          color: var(--accent-primary);
+          letter-spacing: 0.06em;
+          color: var(--accent-blue);
         }
 
         .drawer-body {
           flex-grow: 1;
           overflow-y: auto;
-          padding: 1.5rem 0;
+          padding: 1.25rem 0;
         }
 
         .drawer-inner-content {
@@ -278,28 +273,27 @@ export const DetailDrawer: React.FC = () => {
         }
 
         .section-block {
-          margin-bottom: 1.75rem;
+          margin-bottom: 1.5rem;
         }
 
         .section-title {
-          font-size: 0.75rem;
-          font-weight: 700;
+          font-size: 0.7rem;
+          font-weight: 600;
           text-transform: uppercase;
           letter-spacing: 0.05em;
           color: var(--text-muted);
           margin-bottom: 0.75rem;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.03);
           padding-bottom: 0.25rem;
         }
 
         .document-body-text {
-          font-size: 0.9rem;
+          font-size: 0.85rem;
           color: var(--text-secondary);
           line-height: 1.6;
-          background: rgba(255, 255, 255, 0.01);
+          background: var(--bg-tertiary);
           border: 1px solid var(--border-color);
-          padding: 1rem;
-          border-radius: var(--radius-md);
+          padding: 0.85rem;
+          border-radius: var(--radius-sm);
           max-height: 250px;
           overflow-y: auto;
         }
@@ -314,34 +308,34 @@ export const DetailDrawer: React.FC = () => {
           display: inline-flex;
           align-items: center;
           gap: 0.35rem;
-          font-size: 0.8rem;
+          font-size: 0.75rem;
           background: var(--bg-tertiary);
           border: 1px solid var(--border-color);
-          padding: 0.35rem 0.75rem;
+          padding: 0.3rem 0.6rem;
           border-radius: var(--radius-sm);
           color: var(--text-primary);
           transition: border-color var(--transition-fast);
         }
 
         .entity-tag-btn:hover {
-          border-color: var(--accent-primary);
+          border-color: var(--accent-blue);
         }
 
         .claims-list {
           display: flex;
           flex-direction: column;
-          gap: 0.75rem;
+          gap: 0.6rem;
         }
 
         .claim-item {
-          background: rgba(255, 255, 255, 0.01);
+          background: var(--bg-tertiary);
           border: 1px solid var(--border-color);
-          padding: 0.85rem;
-          border-radius: var(--radius-md);
+          padding: 0.75rem;
+          border-radius: var(--radius-sm);
         }
 
         .claim-text {
-          font-size: 0.85rem;
+          font-size: 0.825rem;
           color: var(--text-primary);
           font-style: italic;
           line-height: 1.5;
@@ -350,15 +344,14 @@ export const DetailDrawer: React.FC = () => {
         .claim-meta {
           display: flex;
           justify-content: space-between;
-          font-size: 0.75rem;
+          font-size: 0.7rem;
           color: var(--text-muted);
           margin-top: 0.5rem;
-          border-top: 1px solid rgba(255, 255, 255, 0.03);
           padding-top: 0.35rem;
         }
 
         .event-full-desc {
-          font-size: 0.95rem;
+          font-size: 0.875rem;
           color: var(--text-secondary);
           line-height: 1.6;
         }
@@ -376,7 +369,7 @@ export const DetailDrawer: React.FC = () => {
         }
 
         .tele-metric {
-          background: rgba(255, 255, 255, 0.01);
+          background: var(--bg-tertiary);
           border: 1px solid var(--border-color);
           border-radius: var(--radius-sm);
           padding: 0.5rem;
@@ -385,28 +378,35 @@ export const DetailDrawer: React.FC = () => {
 
         .metric-label {
           display: block;
-          font-size: 0.65rem;
-          font-weight: 700;
+          font-size: 0.6rem;
+          font-weight: 600;
           color: var(--text-muted);
           text-transform: uppercase;
           margin-bottom: 0.25rem;
         }
 
         .metric-val {
-          font-size: 1rem;
-          font-weight: 700;
+          font-size: 0.95rem;
+          font-weight: 600;
           color: var(--text-primary);
-          font-family: var(--font-display);
+          font-family: var(--font-mono);
         }
 
-        @keyframes fadeInOverlay {
-          from { opacity: 0; }
-          to { opacity: 1; }
+        .close-btn {
+          color: var(--text-secondary);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 0.3rem;
+          border-radius: var(--radius-sm);
+          background: var(--bg-tertiary);
+          border: 1px solid var(--border-color);
+          transition: background var(--transition-fast), color var(--transition-fast);
         }
 
-        @keyframes slideInSheet {
-          from { transform: translateX(100%); }
-          to { transform: translateX(0); }
+        .close-btn:hover {
+          background: var(--bg-elevated);
+          color: var(--text-primary);
         }
       `}</style>
     </div>

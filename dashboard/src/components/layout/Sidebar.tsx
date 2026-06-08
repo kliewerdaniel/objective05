@@ -3,41 +3,40 @@ import { useUiStore } from '../../store/uiStore';
 import type { PageId } from '../../store/uiStore';
 import { useFeedStore } from '../../store/feedStore';
 import {
-  Activity,
-  Layers,
+  Pulse,
+  Stack,
   Network,
   Radio,
   Rss,
-  Settings,
-  ChevronLeft,
-  ChevronRight,
-  TrendingUp,
-} from 'lucide-react';
+  Gear,
+  CaretLeft,
+  CaretRight,
+  TrendUp,
+} from '@phosphor-icons/react';
 
 export const Sidebar: React.FC = () => {
   const { activePage, setActivePage, sidebarCollapsed, toggleSidebar } = useUiStore();
   const { health } = useFeedStore();
 
   const navItems = [
-    { id: 'feed' as PageId, label: 'Live Feed', icon: Activity },
-    { id: 'events' as PageId, label: 'Events', icon: TrendingUp },
-    { id: 'narratives' as PageId, label: 'Narratives', icon: Layers },
+    { id: 'feed' as PageId, label: 'Live Feed', icon: Pulse },
+    { id: 'events' as PageId, label: 'Events', icon: TrendUp },
+    { id: 'narratives' as PageId, label: 'Narratives', icon: Stack },
     { id: 'graph' as PageId, label: 'Graph Explorer', icon: Network },
     { id: 'broadcasts' as PageId, label: 'Broadcasts', icon: Radio },
     { id: 'sources' as PageId, label: 'Sources', icon: Rss },
-    { id: 'settings' as PageId, label: 'Settings', icon: Settings },
+    { id: 'settings' as PageId, label: 'Settings', icon: Gear },
   ];
 
   return (
     <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
       <div className="sidebar-header">
         <div className="logo-container">
-          <div className="logo-glow"></div>
-          <span className="logo-text">OBJECTIVE</span>
+          <span className="logo-text">objective</span>
           <span className="logo-version">v0.5</span>
         </div>
         <button onClick={toggleSidebar} className="collapse-btn">
-          {sidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+          {sidebarCollapsed ? <CaretRight size={18} /> : <CaretLeft size={18} />}
         </button>
       </div>
 
@@ -97,7 +96,7 @@ export const Sidebar: React.FC = () => {
             width: 100%;
           }
           .sidebar-header {
-            padding: 1rem !important;
+            padding: 0.75rem 1rem !important;
           }
           .sidebar-nav {
             flex-direction: row !important;
@@ -105,7 +104,7 @@ export const Sidebar: React.FC = () => {
             overflow-x: auto;
           }
           .nav-item {
-            padding: 0.5rem 1rem !important;
+            padding: 0.5rem 0.75rem !important;
             margin: 0 0.25rem !important;
           }
           .nav-label {
@@ -120,7 +119,7 @@ export const Sidebar: React.FC = () => {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 1.5rem;
+          padding: 1.25rem 1rem;
           border-bottom: 1px solid var(--border-color);
         }
 
@@ -128,36 +127,24 @@ export const Sidebar: React.FC = () => {
           display: flex;
           align-items: center;
           gap: 0.5rem;
-          position: relative;
-        }
-
-        .logo-glow {
-          position: absolute;
-          width: 24px;
-          height: 24px;
-          border-radius: 50%;
-          background: var(--accent-gradient);
-          filter: blur(8px);
-          opacity: 0.5;
         }
 
         .logo-text {
-          font-family: var(--font-display);
+          font-family: var(--font-mono);
           font-weight: 700;
-          font-size: 1.25rem;
+          font-size: 1.1rem;
           letter-spacing: 0.05em;
-          background: var(--accent-gradient);
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
+          color: var(--text-primary);
+          text-transform: lowercase;
         }
 
         .logo-version {
-          font-size: 0.65rem;
-          background: rgba(139, 92, 246, 0.15);
-          color: var(--accent-primary);
+          font-size: 0.6rem;
+          background: var(--bg-tertiary);
+          color: var(--text-muted);
           padding: 0.1rem 0.35rem;
-          border-radius: 4px;
-          font-weight: 600;
+          border-radius: var(--radius-sm);
+          font-weight: 500;
         }
 
         .collapsed .logo-text, .collapsed .logo-version {
@@ -170,61 +157,55 @@ export const Sidebar: React.FC = () => {
           align-items: center;
           justify-content: center;
           padding: 0.35rem;
-          border-radius: 6px;
+          border-radius: var(--radius-sm);
           border: 1px solid var(--border-color);
           background: var(--bg-tertiary);
           transition: background var(--transition-fast), color var(--transition-fast);
         }
 
         .collapse-btn:hover {
-          background: var(--bg-glass-hover);
+          background: var(--bg-elevated);
           color: var(--text-primary);
         }
 
         .sidebar-nav {
           display: flex;
           flex-direction: column;
-          padding: 1rem 0.75rem;
-          gap: 0.25rem;
+          padding: 0.75rem 0.5rem;
+          gap: 0.15rem;
           flex-grow: 1;
         }
 
         .nav-item {
           display: flex;
           align-items: center;
-          gap: 1rem;
-          padding: 0.75rem 1rem;
+          gap: 0.75rem;
+          padding: 0.6rem 0.75rem;
           color: var(--text-secondary);
-          border-radius: var(--radius-md);
+          border-radius: var(--radius-sm);
           transition: background var(--transition-fast), color var(--transition-fast);
           position: relative;
           text-align: left;
+          font-size: 0.8125rem;
         }
 
         .nav-item:hover {
-          background: rgba(255, 255, 255, 0.03);
+          background: rgba(255, 255, 255, 0.04);
           color: var(--text-primary);
         }
 
         .nav-item.active {
-          background: rgba(139, 92, 246, 0.08);
+          background: rgba(0, 122, 255, 0.08);
           color: var(--text-primary);
           font-weight: 500;
         }
 
-        .nav-icon {
-          flex-shrink: 0;
-          color: inherit;
-        }
-
         .nav-item.active .nav-icon {
-          color: var(--accent-primary);
+          color: var(--accent-blue);
         }
 
         .nav-label {
-          font-size: 0.9rem;
           white-space: nowrap;
-          transition: opacity var(--transition-normal);
         }
 
         .collapsed .nav-label {
@@ -234,45 +215,28 @@ export const Sidebar: React.FC = () => {
         .nav-indicator {
           position: absolute;
           left: 0;
-          top: 25%;
-          height: 50%;
-          width: 3px;
-          background: var(--accent-primary);
-          border-radius: 0 4px 4px 0;
-          box-shadow: 0 0 8px var(--accent-primary);
+          top: 20%;
+          height: 60%;
+          width: 2px;
+          background: var(--accent-blue);
+          border-radius: 0 2px 2px 0;
         }
 
         .sidebar-footer {
-          padding: 1rem 1.5rem;
+          padding: 0.75rem 1rem;
           border-top: 1px solid var(--border-color);
         }
 
         .status-indicator {
           display: flex;
           align-items: center;
-          gap: 0.75rem;
-        }
-
-        .status-dot {
-          width: 8px;
-          height: 8px;
-          border-radius: 50%;
-        }
-
-        .status-dot.healthy {
-          background: var(--color-success);
-          box-shadow: 0 0 8px var(--color-success);
-        }
-
-        .status-dot.degraded {
-          background: var(--color-warning);
-          box-shadow: 0 0 8px var(--color-warning);
+          gap: 0.5rem;
         }
 
         .status-text {
-          font-size: 0.7rem;
-          font-weight: 700;
-          letter-spacing: 0.08em;
+          font-size: 0.65rem;
+          font-weight: 600;
+          letter-spacing: 0.06em;
           color: var(--text-muted);
         }
       `}</style>

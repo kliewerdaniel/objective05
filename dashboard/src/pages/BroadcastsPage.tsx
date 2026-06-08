@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useFeedStore } from '../store/feedStore';
 import { useUiStore } from '../store/uiStore';
 import { api } from '../api/client';
-import { Radio, Play, Download, ChevronRight, Square, Zap } from 'lucide-react';
+import { Radio, Play, Download, CaretRight, Square, Lightning } from '@phosphor-icons/react';
 import type { Broadcast } from '../api/types';
 
 export const BroadcastsPage: React.FC = () => {
@@ -52,12 +52,12 @@ export const BroadcastsPage: React.FC = () => {
               onClick={handleGenerate}
               disabled={generating}
             >
-              <Zap size={14} />
+              <Lightning size={14} />
               {generating ? 'Generating…' : 'Generate Now'}
             </button>
           </div>
           {broadcasts.length === 0 ? (
-            <div className="empty-state glass-card">
+            <div className="empty-state">
               <Radio size={48} className="text-muted" />
               <p className="heading-md">No broadcasts generated yet</p>
               <p className="text-muted">Broadcast scheduler will trigger updates hourly. Use CLI to trigger manual briefing.</p>
@@ -72,10 +72,10 @@ export const BroadcastsPage: React.FC = () => {
                     setIsPlaying(false);
                     setCurrentTime(0);
                   }}
-                  className={`briefing-card glass-card ${selectedBroadcast?.id === b.id ? 'active' : ''}`}
+                  className={`briefing-card ${selectedBroadcast?.id === b.id ? 'active' : ''}`}
                 >
                   <div className="b-header">
-                    <span className="badge badge-purple">AUDIO BRIEFING</span>
+                    <span className="badge badge-blue">AUDIO BRIEFING</span>
                     <span className="b-date">
                       {new Date(b.created_at).toLocaleDateString(undefined, {
                         month: 'short',
@@ -91,7 +91,7 @@ export const BroadcastsPage: React.FC = () => {
                   
                   <div className="b-footer">
                     <span className="b-duration">Duration: {getDurationString(b.duration_seconds)}</span>
-                    <ChevronRight size={16} className="b-chevron" />
+                    <CaretRight size={16} className="b-chevron" />
                   </div>
                 </div>
               ))}
@@ -102,7 +102,7 @@ export const BroadcastsPage: React.FC = () => {
         {/* Right Side: Active Broadcast Transcript & Player */}
         <div className="broadcast-viewer">
           {selectedBroadcast ? (
-            <div className="viewer-panel glass-panel">
+            <div className="viewer-panel">
               <div className="viewer-header">
                 <h2 className="heading-lg">{selectedBroadcast.title}</h2>
                 <div className="viewer-actions">
@@ -113,7 +113,7 @@ export const BroadcastsPage: React.FC = () => {
               </div>
 
               {/* Custom Audio Player Widget */}
-              <div className="audio-player-widget glass-card">
+              <div className="audio-player-widget">
                 <div className="player-controls">
                   <button onClick={handlePlayToggle} className="play-btn">
                     {isPlaying ? <Square size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="play-icon-adjust" />}
@@ -164,7 +164,7 @@ export const BroadcastsPage: React.FC = () => {
               </div>
             </div>
           ) : (
-            <div className="viewer-placeholder glass-panel">
+            <div className="viewer-placeholder">
               <Radio size={48} className="text-muted animate-pulse-slow" />
               <h3 className="heading-md">Select a Broadcast</h3>
               <p className="text-muted">Choose a synthesized intelligence briefing from the archive to stream the audio and read the transcript.</p>
@@ -230,8 +230,8 @@ export const BroadcastsPage: React.FC = () => {
         }
 
         .briefing-card.active {
-          border-color: var(--accent-primary);
-          background: rgba(139, 92, 246, 0.04);
+          border-color: var(--accent-blue);
+          background: rgba(0, 122, 255, 0.04);
         }
 
         .b-header {
@@ -246,7 +246,7 @@ export const BroadcastsPage: React.FC = () => {
         }
 
         .b-title {
-          font-family: var(--font-display);
+          font-family: var(--font-mono);
           font-size: 1.1rem;
           font-weight: 600;
           color: var(--text-primary);
@@ -295,8 +295,8 @@ export const BroadcastsPage: React.FC = () => {
 
         .audio-player-widget {
           padding: 1rem !important;
-          background: rgba(255, 255, 255, 0.02) !important;
-          border-radius: var(--radius-md);
+          background: var(--bg-tertiary) !important;
+          border-radius: var(--radius-sm);
         }
 
         .player-controls {
@@ -309,12 +309,11 @@ export const BroadcastsPage: React.FC = () => {
           width: 44px;
           height: 44px;
           border-radius: 50%;
-          background: var(--accent-gradient);
+          background: var(--accent-blue);
           color: var(--text-primary);
           display: flex;
           align-items: center;
           justify-content: center;
-          box-shadow: 0 4px 10px rgba(139, 92, 246, 0.3);
           transition: transform var(--transition-fast);
         }
 
@@ -351,7 +350,7 @@ export const BroadcastsPage: React.FC = () => {
 
         .progress-bar-fill {
           height: 100%;
-          background: var(--accent-gradient);
+          background: var(--accent-blue);
           border-radius: var(--radius-full);
         }
 

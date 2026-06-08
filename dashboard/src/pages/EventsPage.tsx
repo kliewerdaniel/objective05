@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useFeedStore } from '../store/feedStore';
 import { useUiStore } from '../store/uiStore';
 import { api } from '../api/client';
-import { TrendingUp, Calendar, MessageSquare, ArrowUpDown, CheckCircle2 } from 'lucide-react';
+import { TrendUp, CalendarBlank, ChatDots, ArrowsDownUp, CheckCircle } from '@phosphor-icons/react';
 import type { DerivedEvent } from '../api/types';
 
 export const EventsPage: React.FC = () => {
@@ -40,7 +40,7 @@ export const EventsPage: React.FC = () => {
   const getImportanceColor = (score: number) => {
     if (score >= 0.75) return 'var(--color-danger)';
     if (score >= 0.5) return 'var(--color-warning)';
-    return 'var(--accent-secondary)';
+    return 'var(--color-info)';
   };
 
   const getEventTypeLabel = (type: string) => {
@@ -50,7 +50,7 @@ export const EventsPage: React.FC = () => {
   return (
     <div className="events-container animate-fade-in">
       {/* Filtering Header */}
-      <div className="filter-header glass-card">
+      <div className="filter-header">
         <div className="filter-pills">
           {['all', 'technology', 'business', 'politics', 'science', 'world'].map((type: string) => (
             <button
@@ -68,7 +68,7 @@ export const EventsPage: React.FC = () => {
             onClick={() => setSortBy(sortBy === 'importance' ? 'date' : 'importance')}
             className="btn-secondary sort-btn"
           >
-            <ArrowUpDown size={14} />
+            <ArrowsDownUp size={14} />
             Sort by: {sortBy === 'importance' ? 'Importance' : 'Recency'}
           </button>
         </div>
@@ -76,8 +76,8 @@ export const EventsPage: React.FC = () => {
 
       {/* Events Grid */}
       {filteredEvents.length === 0 ? (
-        <div className="empty-state glass-card">
-          <TrendingUp size={48} className="text-muted" />
+        <div className="empty-state">
+            <TrendUp size={48} className="text-muted" />
           <p className="heading-md">No events formed yet</p>
           <p className="text-muted">Ingest more documents and run the correlation engine to group claims into events.</p>
         </div>
@@ -87,10 +87,10 @@ export const EventsPage: React.FC = () => {
             <div
               key={ev.id}
               onClick={() => openDetail('event', ev.id)}
-              className="event-card glass-card"
+              className="event-card"
             >
               <div className="event-card-header">
-                <span className="badge badge-purple">{ev.event_type}</span>
+                <span className="badge badge-blue">{ev.event_type}</span>
                 <span className="badge badge-success">{ev.status}</span>
                 
                 {/* Importance Bar */}
@@ -111,14 +111,14 @@ export const EventsPage: React.FC = () => {
               <div className="event-card-footer">
                 <div className="event-meta">
                   <span className="meta-item">
-                    <Calendar size={13} />
+                    <CalendarBlank size={13} />
                     {new Date(ev.first_observed_at).toLocaleDateString(undefined, {
                       month: 'short',
                       day: 'numeric',
                     })}
                   </span>
                   <span className="meta-item">
-                    <MessageSquare size={13} />
+                    <ChatDots size={13} />
                     {ev.claim_count} claims
                   </span>
                 </div>
@@ -141,7 +141,7 @@ export const EventsPage: React.FC = () => {
                       disabled={resolving === ev.id}
                       title="Mark as resolved"
                     >
-                      <CheckCircle2 size={12} />
+                      <CheckCircle size={12} />
                       {resolving === ev.id ? 'Resolving…' : 'Resolve'}
                     </button>
                   )}
@@ -191,7 +191,7 @@ export const EventsPage: React.FC = () => {
         }
 
         .pill-btn.active {
-          background: var(--accent-gradient);
+          background: var(--accent-blue);
           color: var(--text-primary);
           border-color: transparent;
         }
@@ -243,7 +243,7 @@ export const EventsPage: React.FC = () => {
         }
 
         .event-title {
-          font-family: var(--font-display);
+          font-family: var(--font-mono);
           font-size: 1.15rem;
           font-weight: 600;
           color: var(--text-primary);
@@ -260,7 +260,7 @@ export const EventsPage: React.FC = () => {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          border-top: 1px solid rgba(255, 255, 255, 0.04);
+          border-top: 1px solid var(--border-color);
           padding-top: 0.75rem;
           flex-wrap: wrap;
           gap: 0.5rem;
@@ -294,7 +294,7 @@ export const EventsPage: React.FC = () => {
 
         .entity-chip-more {
           font-size: 0.7rem;
-          color: var(--accent-secondary);
+          color: var(--color-info);
           font-weight: 600;
         }
 

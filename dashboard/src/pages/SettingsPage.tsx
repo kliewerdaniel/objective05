@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useUiStore } from '../store/uiStore';
 import { api } from '../api/client';
 import type { ConfigResponse } from '../api/types';
-import { Cpu, Radio, HardDrive, DownloadCloud, Download } from 'lucide-react';
+import { Cpu, Radio, HardDrive, CloudArrowDown, Download } from '@phosphor-icons/react';
 
 export const SettingsPage: React.FC = () => {
   const { addNotification } = useUiStore();
@@ -33,7 +33,7 @@ export const SettingsPage: React.FC = () => {
     <div className="settings-container animate-fade-in">
       <div className="settings-layout">
         {/* Left Side Navigation */}
-        <div className="settings-nav glass-card">
+        <div className="settings-nav">
           <button
             onClick={() => setActiveSettingsTab('models')}
             className={`settings-nav-btn ${activeSettingsTab === 'models' ? 'active' : ''}`}
@@ -61,7 +61,7 @@ export const SettingsPage: React.FC = () => {
 
         {/* Right Side Content Panel */}
         <div className="settings-content-panel">
-          <form onSubmit={handleSave} className="glass-panel text-left">
+          <form onSubmit={handleSave} className="text-left">
             
             {/* Models Tab */}
             {activeSettingsTab === 'models' && (
@@ -98,9 +98,9 @@ export const SettingsPage: React.FC = () => {
                     </select>
                   </div>
 
-                  <div className="model-download-status glass-card">
+                  <div className="model-download-status">
                     <div className="download-info">
-                      <DownloadCloud size={20} className="text-purple" />
+                      <CloudArrowDown size={20} className="text-purple" />
                       <div>
                         <span className="download-title">Mistral 7B GGUF</span>
                         <span className="download-desc">Downloaded (4.1 GB)</span>
@@ -181,7 +181,7 @@ export const SettingsPage: React.FC = () => {
                   </div>
 
                   {liveConfig && (
-                    <div className="live-config glass-card">
+                    <div className="live-config">
                       <h4>Live Configuration</h4>
                       <dl className="config-list">
                         <div><dt>REST port</dt><dd>{liveConfig.rest_port}</dd></div>
@@ -265,8 +265,8 @@ export const SettingsPage: React.FC = () => {
         }
 
         .settings-nav-btn.active {
-          background: rgba(139, 92, 246, 0.08);
-          color: var(--accent-primary);
+          background: rgba(0, 122, 255, 0.08);
+          color: var(--accent-blue);
         }
 
         .settings-form-grid {
@@ -310,7 +310,7 @@ export const SettingsPage: React.FC = () => {
         }
 
         .text-purple {
-          color: var(--accent-primary);
+          color: var(--accent-blue);
         }
 
         .download-title {
@@ -331,9 +331,9 @@ export const SettingsPage: React.FC = () => {
           display: flex;
           align-items: center;
           gap: 1rem;
-          background: rgba(255, 255, 255, 0.01);
+          background: var(--bg-tertiary);
           padding: 1rem;
-          border-radius: var(--radius-md);
+          border-radius: var(--radius-sm);
           border: 1px solid var(--border-color);
         }
 
@@ -373,7 +373,7 @@ export const SettingsPage: React.FC = () => {
         }
 
         .toggle-checkbox:checked + .toggle-label {
-          background: var(--accent-primary);
+          background: var(--accent-blue);
         }
 
         .toggle-checkbox:checked + .toggle-label::after {
@@ -397,7 +397,7 @@ export const SettingsPage: React.FC = () => {
         }
 
         .settings-footer {
-          border-top: 1px solid rgba(255, 255, 255, 0.04);
+          border-top: 1px solid var(--border-color);
           padding-top: 1.25rem;
         }
 

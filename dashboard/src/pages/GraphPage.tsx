@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useFeedStore } from '../store/feedStore';
 import { useUiStore } from '../store/uiStore';
-import { ZoomIn, ZoomOut, RotateCcw, Search } from 'lucide-react';
+import { MagnifyingGlassPlus, MagnifyingGlassMinus, ArrowCounterClockwise, MagnifyingGlass } from '@phosphor-icons/react';
 
 interface Node {
   id: string;
@@ -404,9 +404,9 @@ export const GraphPage: React.FC = () => {
   const getPageDetail = () => {
     if (!selectedNode) return null;
     return (
-      <div className="node-detail-panel glass-panel animate-fade-in">
+      <div className="node-detail-panel animate-fade-in">
         <h3 className="heading-md">{selectedNode.label}</h3>
-        <span className="badge badge-purple">{selectedNode.type}</span>
+        <span className="badge badge-blue">{selectedNode.type}</span>
 
         <p className="text-muted mt-2">
           {selectedNode.type === 'entity' && `Extracted entity matching class type "${selectedNode.subType}".`}
@@ -431,10 +431,10 @@ export const GraphPage: React.FC = () => {
 
   return (
     <div className="graph-container animate-fade-in">
-      <div className="graph-controls-bar glass-card">
+      <div className="graph-controls-bar">
         {/* Search */}
         <div className="graph-search">
-          <Search size={16} />
+          <MagnifyingGlass size={16} />
           <input
             type="text"
             placeholder="Search nodes..."
@@ -447,13 +447,13 @@ export const GraphPage: React.FC = () => {
         {/* Action buttons */}
         <div className="zoom-actions">
           <button onClick={() => zoom(1.25)} className="btn-secondary ctrl-btn" title="Zoom In">
-            <ZoomIn size={16} />
+            <MagnifyingGlassPlus size={16} />
           </button>
           <button onClick={() => zoom(0.8)} className="btn-secondary ctrl-btn" title="Zoom Out">
-            <ZoomOut size={16} />
+            <MagnifyingGlassMinus size={16} />
           </button>
           <button onClick={resetView} className="btn-secondary ctrl-btn" title="Recenter">
-            <RotateCcw size={16} />
+            <ArrowCounterClockwise size={16} />
           </button>
         </div>
       </div>
@@ -467,14 +467,14 @@ export const GraphPage: React.FC = () => {
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
-          className="graph-canvas glass-card"
+          className="graph-canvas"
         ></canvas>
 
         {/* Selected node details */}
         {getPageDetail()}
       </div>
 
-      <div className="graph-legend glass-card">
+      <div className="graph-legend">
         <div className="legend-title">Legend</div>
         <div className="legend-items">
           <div className="legend-item">
@@ -559,8 +559,8 @@ export const GraphPage: React.FC = () => {
           width: 100%;
           height: 550px;
           cursor: grab;
-          border-radius: var(--radius-lg);
-          background: rgba(0, 0, 0, 0.2);
+          border-radius: var(--radius-sm);
+          background: var(--bg-tertiary);
         }
 
         .graph-canvas:active {

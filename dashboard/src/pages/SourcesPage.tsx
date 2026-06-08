@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useFeedStore } from '../store/feedStore';
 import { useUiStore } from '../store/uiStore';
 import type { SourceDefinition, SourceType } from '../api/types';
-import { Rss, Plus, CheckCircle, AlertCircle, RefreshCcw, Trash2, Play, Power } from 'lucide-react';
+import { Rss, Plus, CheckCircle, WarningCircle, ArrowClockwise, Trash, Play, Power } from '@phosphor-icons/react';
 
 const SOURCE_TYPE_OPTIONS: { value: SourceType; label: string; needsUrl: boolean }[] = [
   { value: 'rss', label: 'RSS / Atom Feed', needsUrl: true },
@@ -123,7 +123,7 @@ export const SourcesPage: React.FC = () => {
             className="btn-secondary"
             disabled={!registryAvailable}
           >
-            <RefreshCcw size={14} />
+            <ArrowClockwise size={14} />
             Refresh
           </button>
           <button
@@ -139,7 +139,7 @@ export const SourcesPage: React.FC = () => {
 
       {/* Add Source Form */}
       {showAddForm && registryAvailable && (
-        <form onSubmit={handleAddSource} className="add-source-form glass-panel animate-fade-in">
+        <form onSubmit={handleAddSource} className="add-source-form animate-fade-in">
           <h3 className="heading-md mb-3">New Ingestion Adapter</h3>
           
           <div className="form-fields">
@@ -199,14 +199,14 @@ export const SourcesPage: React.FC = () => {
       {/* Sources Grid */}
       <div className="sources-grid">
         {registeredSources.length === 0 && registryAvailable && (
-          <div className="empty-state glass-card">
+          <div className="empty-state">
             No sources registered yet. Click <strong>Add Source</strong> to wire up your first adapter.
           </div>
         )}
         {registeredSources.map((s) => {
           const isActing = acting === s.name;
           return (
-            <div key={s.name} className="source-card glass-card">
+            <div key={s.name} className="source-card">
               <div className="s-card-header">
                 <div className="s-card-title-group">
                   <Rss size={18} className="text-muted" />
@@ -216,7 +216,7 @@ export const SourcesPage: React.FC = () => {
                   {s.enabled ? (
                     <CheckCircle size={16} className="text-success" />
                   ) : (
-                    <AlertCircle size={16} className="text-warning" />
+                    <WarningCircle size={16} className="text-warning" />
                   )}
                   <span className="s-status-text">{s.enabled ? 'Enabled' : 'Disabled'}</span>
                 </div>
@@ -225,7 +225,7 @@ export const SourcesPage: React.FC = () => {
               <div className="s-card-details">
                 <div className="s-detail-row">
                   <span className="s-detail-label">Type:</span>
-                  <span className="badge badge-purple">{s.source_type}</span>
+                  <span className="badge badge-blue">{s.source_type}</span>
                 </div>
                 {s.url && (
                   <div className="s-detail-row">
@@ -264,7 +264,7 @@ export const SourcesPage: React.FC = () => {
                   disabled={isActing}
                   title="Delete source"
                 >
-                  <Trash2 size={14} className="text-danger" />
+                  <Trash size={14} className="text-danger" />
                 </button>
               </div>
             </div>
@@ -342,7 +342,7 @@ export const SourcesPage: React.FC = () => {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+          border-bottom: 1px solid var(--border-color);
           padding-bottom: 0.75rem;
         }
 
@@ -353,7 +353,7 @@ export const SourcesPage: React.FC = () => {
         }
 
         .s-name {
-          font-family: var(--font-display);
+          font-family: var(--font-mono);
           font-size: 1.1rem;
           font-weight: 600;
           color: var(--text-primary);
@@ -412,7 +412,7 @@ export const SourcesPage: React.FC = () => {
           display: flex;
           justify-content: flex-end;
           gap: 0.5rem;
-          border-top: 1px solid rgba(255, 255, 255, 0.04);
+          border-top: 1px solid var(--border-color);
           padding-top: 0.75rem;
         }
 

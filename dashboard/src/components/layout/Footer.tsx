@@ -1,6 +1,6 @@
 import React from 'react';
 import { useFeedStore } from '../../store/feedStore';
-import { Database, Cpu, HelpCircle, HardDrive } from 'lucide-react';
+import { Database, Cpu, Question, HardDrive } from '@phosphor-icons/react';
 
 export const Footer: React.FC = () => {
   const { metrics, documents, extractions, events } = useFeedStore();
@@ -47,7 +47,7 @@ export const Footer: React.FC = () => {
           </span>
         )}
         <span className="footer-link">
-          <HelpCircle size={14} />
+          <Question size={14} />
           Local OS
         </span>
       </div>
@@ -57,38 +57,40 @@ export const Footer: React.FC = () => {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 0.65rem 2rem;
+          padding: 0.5rem 1.5rem;
           background: var(--bg-secondary);
           border-top: 1px solid var(--border-color);
-          font-size: 0.75rem;
-          color: var(--text-secondary);
+          font-size: 0.7rem;
+          color: var(--text-muted);
           z-index: 30;
         }
 
         .footer-left {
           display: flex;
           align-items: center;
-          gap: 1.5rem;
+          gap: 1.25rem;
         }
 
         .stat-ticker {
           display: flex;
           align-items: center;
-          gap: 0.4rem;
+          gap: 0.35rem;
         }
 
         .stat-ticker strong {
-          color: var(--text-primary);
+          color: var(--text-secondary);
+          font-weight: 500;
         }
 
         .footer-right {
           display: flex;
           align-items: center;
-          gap: 1.5rem;
+          gap: 1rem;
         }
 
         .pipeline-cycle strong {
-          color: var(--text-primary);
+          color: var(--text-secondary);
+          font-weight: 500;
         }
 
         .footer-link {

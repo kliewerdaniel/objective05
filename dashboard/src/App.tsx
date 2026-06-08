@@ -83,7 +83,7 @@ function App() {
           <div
             key={toast.id}
             onClick={() => removeNotification(toast.id)}
-            className={`toast toast-${toast.type} glass-card animate-fade-in`}
+            className={`toast toast-${toast.type} animate-fade-in`}
           >
             <span>{toast.message}</span>
           </div>
@@ -106,12 +106,15 @@ function App() {
         .toast {
           pointer-events: auto;
           cursor: pointer;
-          padding: 0.75rem 1.25rem !important;
+          padding: 0.75rem 1.25rem;
           font-size: 0.85rem;
           font-weight: 500;
           min-width: 250px;
           max-width: 400px;
-          border-left: 4px solid var(--accent-primary) !important;
+          background: var(--bg-secondary);
+          border: 1px solid var(--border-color);
+          border-left: 4px solid var(--accent-blue);
+          border-radius: var(--radius-sm);
           animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
           text-align: left;
         }

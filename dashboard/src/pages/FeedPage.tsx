@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useFeedStore } from '../store/feedStore';
 import { useUiStore } from '../store/uiStore';
-import { Search, Calendar, User, FileText } from 'lucide-react';
+import { MagnifyingGlass, CalendarBlank, User, FileText } from '@phosphor-icons/react';
 import type { RawDocument } from '../api/types';
 
 export const FeedPage: React.FC = () => {
@@ -39,9 +39,9 @@ export const FeedPage: React.FC = () => {
   return (
     <div className="feed-container animate-fade-in">
       {/* Search & Filter Bar */}
-      <div className="search-filter-bar glass-card">
+      <div className="search-filter-bar">
         <div className="search-wrapper">
-          <Search size={18} className="search-icon" />
+          <MagnifyingGlass size={18} className="search-icon" />
           <input
             type="text"
             placeholder="Search raw documents, entities, claims..."
@@ -68,7 +68,7 @@ export const FeedPage: React.FC = () => {
       {/* Document List */}
       <div className="doc-list-wrapper">
         {filteredDocs.length === 0 ? (
-          <div className="empty-state glass-card">
+          <div className="empty-state">
             <FileText size={48} className="text-muted" />
             <p className="heading-md">No documents found</p>
             <p className="text-muted">Ingestion daemon is polling. Check source configs.</p>
@@ -84,10 +84,10 @@ export const FeedPage: React.FC = () => {
                 <article
                   key={doc.id}
                   onClick={() => openDetail('document', doc.id)}
-                  className="doc-card glass-card"
+                  className="doc-card"
                 >
                   <div className="doc-card-header">
-                    <span className="badge badge-purple">{doc.source_type}</span>
+                    <span className="badge badge-blue">{doc.source_type}</span>
                     <span className="doc-source">{doc.source_id.replace('_', ' ')}</span>
                   </div>
 
@@ -106,14 +106,14 @@ export const FeedPage: React.FC = () => {
                         </span>
                       )}
                       <span className="meta-item">
-                        <Calendar size={12} />
+                        <CalendarBlank size={12} />
                         {formatDate(doc.published_at || doc.fetched_at)}
                       </span>
                     </div>
 
                     <div className="doc-stats">
                       {entityCount > 0 && (
-                        <span className="badge badge-teal" title="Extracted Entities">
+                        <span className="badge badge-success" title="Extracted Entities">
                           {entityCount} entities
                         </span>
                       )}
@@ -205,7 +205,7 @@ export const FeedPage: React.FC = () => {
         }
 
         .doc-title {
-          font-family: var(--font-display);
+          font-family: var(--font-mono);
           font-size: 1.2rem;
           font-weight: 600;
           color: var(--text-primary);
@@ -222,7 +222,7 @@ export const FeedPage: React.FC = () => {
           justify-content: space-between;
           align-items: center;
           margin-top: 0.5rem;
-          border-top: 1px solid rgba(255, 255, 255, 0.04);
+          border-top: 1px solid var(--border-color);
           padding-top: 0.75rem;
           flex-wrap: wrap;
           gap: 0.5rem;

@@ -1,7 +1,7 @@
 import React from 'react';
 import { useUiStore } from '../../store/uiStore';
 import { useFeedStore } from '../../store/feedStore';
-import { RefreshCw, Wifi, WifiOff, Clock } from 'lucide-react';
+import { ArrowClockwise, WifiHigh, WifiSlash, Clock } from '@phosphor-icons/react';
 
 export const Header: React.FC = () => {
   const { activePage } = useUiStore();
@@ -38,7 +38,7 @@ export const Header: React.FC = () => {
   };
 
   return (
-    <header className="header glass-card">
+    <header className="header">
       <div className="header-left">
         <h1 className="header-title">{getPageTitle()}</h1>
       </div>
@@ -48,12 +48,12 @@ export const Header: React.FC = () => {
         <div className="connection-status" title={wsConnected ? 'WebSocket Active' : 'Polling REST API'}>
           {wsConnected ? (
             <>
-              <Wifi size={16} className="text-success animate-pulse-slow" />
+              <WifiHigh size={16} className="text-success animate-pulse-slow" />
               <span className="connection-label">Live</span>
             </>
           ) : (
             <>
-              <WifiOff size={16} className="text-warning" />
+              <WifiSlash size={16} className="text-warning" />
               <span className="connection-label text-warning">Syncing</span>
             </>
           )}
@@ -72,7 +72,7 @@ export const Header: React.FC = () => {
           className={`sync-btn ${loading ? 'loading' : ''}`}
           title="Manual Sync"
         >
-          <RefreshCw size={16} />
+          <ArrowClockwise size={16} />
         </button>
       </div>
 
@@ -81,36 +81,34 @@ export const Header: React.FC = () => {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 1rem 2rem;
-          border-radius: 0;
-          border-inline: none;
-          border-top: none;
+          padding: 0.75rem 1.5rem;
+          border-bottom: 1px solid var(--border-color);
           background: var(--bg-secondary);
           z-index: 40;
-          box-shadow: var(--shadow-sm);
         }
 
         .header-title {
-          font-family: var(--font-display);
-          font-weight: 700;
-          font-size: 1.5rem;
+          font-family: var(--font-mono);
+          font-weight: 600;
+          font-size: 1rem;
           color: var(--text-primary);
+          letter-spacing: 0.02em;
         }
 
         .header-right {
           display: flex;
           align-items: center;
-          gap: 1.5rem;
+          gap: 0.75rem;
         }
 
         .connection-status {
           display: flex;
           align-items: center;
           gap: 0.35rem;
-          font-size: 0.8rem;
+          font-size: 0.75rem;
           font-weight: 600;
-          background: rgba(255, 255, 255, 0.02);
-          padding: 0.35rem 0.75rem;
+          background: var(--bg-tertiary);
+          padding: 0.25rem 0.6rem;
           border-radius: var(--radius-sm);
           border: 1px solid var(--border-color);
         }
@@ -130,11 +128,11 @@ export const Header: React.FC = () => {
         .uptime-widget {
           display: flex;
           align-items: center;
-          gap: 0.5rem;
-          font-size: 0.85rem;
+          gap: 0.4rem;
+          font-size: 0.75rem;
           color: var(--text-secondary);
-          background: rgba(255, 255, 255, 0.02);
-          padding: 0.35rem 0.75rem;
+          background: var(--bg-tertiary);
+          padding: 0.25rem 0.6rem;
           border-radius: var(--radius-sm);
           border: 1px solid var(--border-color);
         }
@@ -144,7 +142,7 @@ export const Header: React.FC = () => {
           display: flex;
           align-items: center;
           justify-content: center;
-          padding: 0.5rem;
+          padding: 0.4rem;
           border-radius: var(--radius-sm);
           background: var(--bg-tertiary);
           border: 1px solid var(--border-color);
@@ -152,7 +150,7 @@ export const Header: React.FC = () => {
         }
 
         .sync-btn:hover:not(:disabled) {
-          background: var(--bg-glass-hover);
+          background: var(--bg-elevated);
           color: var(--text-primary);
         }
 
